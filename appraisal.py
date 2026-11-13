@@ -79,13 +79,27 @@ def metadata(frame):
     out['Period'] = pd.to_datetime([parse_period(row[month_col], row[year_col] if year_col else None)
                                   if month_col else pd.NaT for _, row in out.iterrows()])
     out['Date source'] = month_col or 'Unavailable'
-    remarks_col = pick_remarks_column(out)
-    out['Remarks'] = out[remarks_col].fillna('').astype(str) if remarks_col else ''
+    # Preserve every narrative field, not only the first header (which may be blank).
+    primary = pick_remarks_column(out)
+    narrative_cols = [c for c in out.columns
+                      if re.search(r'\b(?:remarks?|comments?|feedback)\b', norm(c))
+                      and not re.search(r'\b(?:date|month|year|time|timestamp|type|score|rating)\b', norm(c))]
+    if primary and primary not in narrative_cols:
+        narrative_cols.insert(0, primary)
+    narrative_cols = list(dict.fromkeys(narrative_cols))
+    def narrative_text(row):
+        pieces = [(c, str(row[c])) for c in narrative_cols if pd.notna(row[c]) and str(row[c]).strip()]
+        if len(pieces) == 1:
+            return pieces[0][1]
+        return '\n\n'.join(f'[{c}]\n{text}' for c, text in pieces)
+    out['Remarks'] = out.apply(narrative_text, axis=1) if len(out) else pd.Series(dtype=str)
+    out['Remarks source'] = ', '.join(narrative_cols) if narrative_cols else 'No narrative column detected'
     return out
 
 
 def prepare_quantitative(frame):
     out = metadata(frame)
+    out['Inline remarks'] = out['Remarks']
     out['Instrument group'] = out['Instrument key'].map(INSTRUMENTS).fillna('Unknown')
     out['Invalid score cells'] = 0
     for col in SCORE_COLUMNS:
@@ -120,7 +134,7 @@ def join_remarks(quant, qualitative):
         if not row['Resident key']:
             q.at[qi, 'Comment match'] = 'Missing resident'
             continue
-        if row['ID key']:
+        if row['ID key'] and qual['ID key'].ne('').any():
             candidates = qual[qual['ID key'].eq(row['ID key'])]
             peers = q[q['ID key'].eq(row['ID key'])]
             # ID collision or inconsistent identity/context never authorizes a match.
@@ -142,6 +156,9 @@ def join_remarks(quant, qualitative):
             for key in keys:
                 candidates = candidates[candidates[key].eq(row[key])]
                 peers = peers[peers[key].eq(row[key])]
+            # A different explicit ID must never be overridden by a compound-key match.
+            if row['ID key']:
+                candidates = candidates[candidates['ID key'].eq('') | candidates['ID key'].eq(row['ID key'])]
             # Use instrument/posting only when both sheets provide the field for these candidates.
             for key in ['Instrument key', 'Posting key']:
                 if row[key] and len(candidates) and candidates[key].ne('').all():
@@ -206,7 +223,7 @@ def resident_summary(frame):
     rows = []
     for key, group in frame[frame['Resident key'].ne('')].groupby('Resident key', sort=False):
         s = group['Evaluation score']
-        rows.append({'Resident Name': group['Resident Name'].iloc[0], 'Combined Mean (1–5)': s.mean(),
+        rows.append({'Resident key': key, 'Resident Name': group['Resident Name'].iloc[0], 'Combined Mean (1–5)': s.mean(),
                      'Median (1–5)': s.median() if s.notna().any() else np.nan, 'Minimum': s.min(), 'Maximum': s.max(),
                      'Valid scored evals': int(s.notna().sum()), 'Total evals': len(group),
                      'ID evals': int(group['Instrument group'].eq('ID').sum()),
@@ -251,3 +268,61 @@ def synthetic_data():
                        'Consistently completed tasks and explained decisions clearly. This fictional narrative is for demonstration only, not an assessment.',
                        'Some domains were not observed in this posting. Review the domain coverage alongside the available evidence.']
     return q, qual
+
+
+def resident_narratives(scores, comments, resident_key, start=None, end=None):
+    """Read source comments independently of score linkage; never attach by resident alone."""
+    rows = []
+    for _, row in comments[comments['Resident key'].eq(resident_key)].iterrows():
+        rows.append({'Source': 'Qualitative', 'Source row': row['Source row'], 'Period': row['Period'],
+                     'Assessor': row['Assessor original'], 'Assessment Type': row['Assessment Type'],
+                     'Remarks': row['Remarks'], 'Match status': row['Match status'], 'Remarks source': row['Remarks source']})
+    for _, row in scores[scores['Resident key'].eq(resident_key)].iterrows():
+        inline = row['Inline remarks']
+        if not inline.strip():
+            continue
+        # Avoid repeating identical text copied across both sheets for the matched evaluation.
+        same = comments[comments['Source row'].eq(row['Qualitative row'])] if pd.notna(row['Qualitative row']) else comments.iloc[0:0]
+        if len(same) == 1 and same['Remarks'].iloc[0] == inline:
+            continue
+        rows.append({'Source': 'Quantitative (inline)', 'Source row': row['Source row'], 'Period': row['Period'],
+                     'Assessor': row['Assessor original'], 'Assessment Type': row['Assessment Type'],
+                     'Remarks': inline, 'Match status': 'Inline comment', 'Remarks source': row['Remarks source']})
+    result = pd.DataFrame(rows, columns=['Source','Source row','Period','Assessor','Assessment Type','Remarks','Match status','Remarks source'])
+    def scope(period):
+        if pd.isna(period):
+            return 'Date unknown: not used in current-period ranking'
+        if start is not None and end is not None and pd.Timestamp(start) <= period <= pd.Timestamp(end):
+            return 'Within selected appraisal period'
+        return 'Outside selected appraisal period'
+    result['Period context'] = result['Period'].map(scope)
+    return result.sort_values(['Period','Source','Source row'], na_position='last').reset_index(drop=True)
+
+
+def sensitivity_analysis(frame, excluded_ids):
+    """Recompute a clearly separate scenario; never mutate, delete or penalize source records."""
+    excluded = frame[frame['Row ID'].isin(excluded_ids)].copy()
+    included = frame[~frame['Row ID'].isin(excluded_ids)].copy()
+    baseline = resident_summary(frame)
+    selected = resident_summary(included)
+    if baseline.empty:
+        return included, excluded, baseline, selected, pd.DataFrame()
+    if selected.empty:
+        selected = baseline.iloc[0:0].copy()
+    selected = selected.set_index('Resident key').reindex(baseline['Resident key']).reset_index()
+    names = baseline.set_index('Resident key')['Resident Name']
+    selected['Resident Name'] = selected['Resident key'].map(names)
+    for c in ['Valid scored evals','Total evals','ID evals','GM evals','Unknown evals','Unique assessors','Flagged evals']:
+        selected[c] = selected[c].fillna(0).astype(int)
+    selected['Rank'] = selected['Rank'].astype('Int64')
+    selected['Domain coverage'] = selected['Domain coverage'].fillna('0/0')
+    selected['Evaluation range'] = selected['Evaluation range'].fillna('Not scored')
+    selected['Context / Audit Flags'] = selected['Context / Audit Flags'].fillna('All evaluations excluded in this scenario')
+    selected = selected.sort_values(['Rank','Resident Name'], na_position='last').reset_index(drop=True)
+    compare = baseline[['Resident key','Resident Name','Rank','Combined Mean (1–5)','Total evals']].rename(
+        columns={'Rank':'Baseline rank','Combined Mean (1–5)':'Baseline mean','Total evals':'Baseline evaluations'})
+    compare = compare.merge(selected[['Resident key','Rank','Combined Mean (1–5)','Total evals']], on='Resident key', how='left').rename(
+        columns={'Rank':'Scenario rank','Combined Mean (1–5)':'Scenario mean','Total evals':'Included evaluations'})
+    compare['Excluded evaluations'] = compare['Baseline evaluations'] - compare['Included evaluations']
+    compare['Mean change'] = compare['Scenario mean'] - compare['Baseline mean']
+    return included, excluded, baseline, selected, compare.drop(columns='Resident key')

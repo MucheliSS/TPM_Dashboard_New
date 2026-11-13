@@ -1,9 +1,10 @@
 """Summative appraisal evidence dashboard. Run: streamlit run tpm_dashboard.py."""
 from io import BytesIO
+from hashlib import sha256
 import pandas as pd
 import streamlit as st
 from appraisal import (DOMAINS, INSTRUMENTS, ALIASES, prepare_quantitative, join_remarks,
-                       in_period, resident_summary, synthetic_data, workbook_bytes)
+                       in_period, resident_summary, synthetic_data, workbook_bytes, resident_narratives, sensitivity_analysis)
 
 from visualizations import profile_figure, domain_summary, temporal_figure, comparison_figure, filter_comments
 
@@ -30,12 +31,14 @@ with st.sidebar:
     st.caption('Excel only. PDF exports are useful for schema review, but cannot be uploaded here. Files are processed in this session; do not deploy without access controls.')
 
 if demo:
+    dataset_key = 'synthetic-v1'
     q, comments = synthetic_data()
     scores, comments = join_remarks(prepare_quantitative(q), comments)
     st.warning('Demonstration: all names, scores and comments below are fictional.')
     st.download_button('Download synthetic Excel template', workbook_bytes(q, synthetic_data()[1]), 'synthetic_appraisal_template.xlsx')
 elif upload:
     try:
+        dataset_key = sha256(upload.getvalue()).hexdigest()[:16]
         scores, comments = load_workbook(upload.getvalue())
     except Exception as exc:
         st.error(f'Cannot read workbook: {type(exc).__name__}. Check that it is an unencrypted .xlsx with a Quantitative sheet and valid headers.')
@@ -85,15 +88,22 @@ with st.expander('Import validation and scoring rules', expanded=False):
                 st.write(f"Row {record['Source row']} · {record['Resident Name']}")
                 st.text(record['Remarks'] or 'No matched or inline remarks available.')
 
+if len(comments) and not comments['Remarks'].str.strip().ne('').any():
+    st.warning('Qualitative rows were loaded but no narrative text was found. Check the original Excel comment headers and cells. No comments have been invented or inferred.')
+    st.caption('Detected narrative source: ' + ', '.join(comments['Remarks source'].unique()))
+
 individual, narrative, ranking = st.tabs(['📊 Individual SR', '💬 Score and narrative audit', '🏆 Overall Ranking'])
 with individual:
-    if current.empty or not current['Resident key'].ne('').any():
-        st.info('No resident evaluations in this period.')
+    resident_catalog = pd.concat([scores[['Resident key', 'Resident Name']], comments[['Resident key', 'Resident Name']]], ignore_index=True)
+    if not resident_catalog['Resident key'].ne('').any():
+        st.info('No resident identities were found in either sheet.')
     else:
-        keys = current.loc[current['Resident key'].ne(''), ['Resident key', 'Resident Name']].drop_duplicates('Resident key')
+        keys = resident_catalog.loc[resident_catalog['Resident key'].ne('')].drop_duplicates('Resident key')
         names = dict(zip(keys['Resident key'], keys['Resident Name']))
         selected = st.selectbox('Choose resident', list(names), format_func=names.get)
         data = current[current['Resident key'].eq(selected)].copy()
+        if data.empty:
+            st.info('No quantitative evaluations for this resident in the selected appraisal period. Available source comments are shown below, independently of score matching.')
         median = data['Evaluation score'].median() if data['Evaluation score'].notna().any() else float('nan')
         data['Delta vs resident median'] = data['Evaluation score'] - median
         x, y, z = st.columns(3)
@@ -128,12 +138,15 @@ with individual:
                                     'Evaluation score': st.column_config.NumberColumn(format='%.2f'),
                                     'Domain mean': st.column_config.NumberColumn(format='%.2f')})
         st.subheader('Verbatim narrative review')
-        for _, row in data.iterrows():
-            with st.expander(f"Row {row['Source row']} · {row['Period']:%b %Y} · {row['Assessor original']} · {row['Assessment Type']}"):
-                st.text(row['Remarks'] or 'No matched or inline remark available.')
-                st.caption(row['Audit flags'] or 'No automatic flags. This does not establish evidence quality.')
-                st.dataframe(pd.DataFrame({'Domain': DOMAINS, 'Mapped score': [row[d] for d in DOMAINS],
-                                           'Original score': [row[f'Raw {d}'] for d in DOMAINS]}), hide_index=True)
+        st.caption('All qualitative source comments for this resident are shown, including unmatched, ambiguous and undated records. They are not assigned to a score merely because the resident matches. The profile-month filter does not hide these narratives.')
+        narratives = resident_narratives(scores, comments, selected, start if periods else None, end if periods else None)
+        if narratives.empty:
+            st.info('No source narrative records were found for this resident. Check the Qualitative sheet and import diagnostics.')
+        for _, row in narratives.iterrows():
+            date_label = row['Period'].strftime('%b %Y') if pd.notna(row['Period']) else 'Unknown date'
+            with st.expander(f"{date_label} · {row['Assessor'] or 'Assessor unavailable'} · {row['Source']} row {row['Source row']}", expanded=True):
+                st.caption(f"{row['Period context']} | {row['Match status']} | {row['Assessment Type'] or 'Instrument unspecified'} | Source field(s): {row['Remarks source']}")
+                st.text(row['Remarks'] or 'This source row has no narrative text.')
         if previous:
             try:
                 prior, _ = load_workbook(previous.getvalue())
@@ -188,13 +201,38 @@ with narrative:
 with ranking:
     st.subheader('Current-period summative standing')
     st.caption('Committee decision support, not a complete measure of merit or service contribution. Small numeric differences and sparse evidence require judgement.')
-    summary = resident_summary(current)
+    exclusion_key = f"excluded_{dataset_key}_{start if periods else 'none'}_{end if periods else 'none'}"
+    st.subheader('Assessment selection: sensitivity analysis')
+    st.caption('Default: include every current-period evaluation. Exclusions are a temporary scenario in this session only. No rows are deleted, no flags automatically exclude a row, and the individual/narrative tabs continue to show the baseline evidence. Changing workbook or appraisal period resets the selection.')
+    choices = {int(r['Row ID']): f"Row {r['Source row']} | {r['Resident Name']} | {r['Period']:%b %Y} | {r['Assessor original']} | {r['Assessment Type']} | score {r['Evaluation score']:.2f}" for _, r in current.iterrows()}
+    def clear_exclusions():
+        st.session_state[exclusion_key] = []
+    st.button('Restore all assessments', on_click=clear_exclusions)
+    excluded_ids = st.multiselect('Exclude assessments from the ranking scenario', list(choices),
+                                 format_func=choices.get, key=exclusion_key)
+    included, excluded, baseline, summary, comparison = sensitivity_analysis(current, excluded_ids)
+    a, b, c = st.columns(3)
+    a.metric('Baseline evaluations', len(current))
+    b.metric('Included in scenario', len(included))
+    c.metric('Excluded in scenario', len(excluded))
+    if len(excluded):
+        st.warning(f'Sensitivity scenario active: {len(excluded)} evaluations excluded, including {int(excluded["Evaluation score"].notna().sum())} with valid scores. This is not a change to the baseline appraisal record.')
+        st.dataframe(excluded[['Source row','Resident Name','Period','Assessor original','Assessment Type','Evaluation score','Audit flags']], hide_index=True, width='stretch')
+        st.subheader('Baseline versus selected assessments')
+        st.dataframe(comparison, hide_index=True, width='stretch')
+        with st.expander('Unchanged baseline ranking'):
+            st.dataframe(baseline[['Rank','Resident Name','Combined Mean (1–5)','Median (1–5)','Total evals']], hide_index=True, width='stretch')
+        st.subheader('Selected-assessment scenario ranking')
+    else:
+        st.caption('No exclusions: the chart and ranking below are the complete current-period baseline.')
     if summary.empty:
         st.info('No eligible records in this period.')
     else:
         if summary['Combined Mean (1–5)'].notna().any():
             st.plotly_chart(comparison_figure(summary), width='stretch', key='overall_comparison')
-            st.caption('Bars show evaluation-weighted means, not certainty or a complete merit score. Hover for evidence counts and range; review the separate ID/GM breakdown below.')
+            st.caption('Bars and the tables below use the same selected assessments. They show evaluation-weighted means, not certainty or a complete merit score. Hover for evidence counts and range; review the separate ID/GM breakdown below.')
+        if not summary['Combined Mean (1–5)'].notna().any():
+            st.info('No valid scored assessments remain in this scenario. Residents are shown unranked; restore assessments to recover the baseline.')
         columns = ['Rank', 'Resident Name', 'Combined Mean (1–5)', 'Median (1–5)', 'Evaluation range',
                    'ID evals', 'GM evals', 'Valid scored evals', 'Unique assessors', 'Context / Audit Flags']
         st.dataframe(summary[columns], hide_index=True, width='stretch',

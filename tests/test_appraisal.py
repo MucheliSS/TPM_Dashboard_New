@@ -152,3 +152,65 @@ def test_conflicting_year_is_not_silently_overwritten(value):
 def test_duplicate_key_visible_without_qualitative():
     x = process([qrow(), qrow()])
     assert x['Audit flags'].str.contains('Repeated evaluation key').all()
+
+
+def test_multiple_narrative_fields_and_blank_primary_preserved():
+    from appraisal import metadata
+    data = metadata(pd.DataFrame([qrow(Remarks='', Comments='  Original\nline.  '),
+                                  qrow(Remarks='First source', Comments='Second source')]))
+    assert data['Remarks'].iloc[0] == '  Original\nline.  '
+    assert '[Remarks]\nFirst source' in data['Remarks'].iloc[1]
+    assert '[Comments]\nSecond source' in data['Remarks'].iloc[1]
+
+
+def test_id_only_on_quantitative_safely_falls_back_to_unique_compound_key():
+    q = qrow(**{'Assessment ID':'quant-only'})
+    x = process([q], [qrow(Remarks='Source comment')])
+    assert x['Comment match'].iloc[0] == 'Matched'
+    assert x['Remarks'].iloc[0] == 'Source comment'
+
+
+def test_resident_narratives_preserve_unmatched_unknown_and_qual_only():
+    from appraisal import resident_narratives
+    qual = [qrow(Remarks='Matched words'), qrow(**{'Name of Evaluator':'Other','Remarks':'Unmatched words'}),
+            qrow(**{'Month of Assessment':None,'Remarks':'Undated words'}),
+            qrow(**{'Resident Name':'Qual only','Remarks':'Standalone narrative'})]
+    q,c = join_remarks(prepare_quantitative(pd.DataFrame([qrow()])),pd.DataFrame(qual))
+    narratives = resident_narratives(q,c,'resident a','2026-01','2026-01')
+    assert len(narratives) == 3
+    assert set(narratives['Remarks']) == {'Matched words','Unmatched words','Undated words'}
+    assert narratives['Period context'].str.contains('unknown').sum() == 1
+    assert len(resident_narratives(q,c,'qual only')) == 1
+    assert len(q) == 1 and q['Evaluation score'].iloc[0] == 4
+
+
+def test_inline_narrative_not_duplicated_when_identical_to_qualitative():
+    from appraisal import resident_narratives
+    q,c = join_remarks(prepare_quantitative(pd.DataFrame([qrow(Remarks='Same text')])),pd.DataFrame([qrow(Remarks='Same text')]))
+    assert len(resident_narratives(q,c,'resident a')) == 1
+
+
+def test_sensitivity_exclusion_is_reversible_and_does_not_mutate():
+    from appraisal import sensitivity_analysis
+    q,c = synthetic_data()
+    data,_ = join_remarks(prepare_quantitative(q),c)
+    before = data.copy(deep=True)
+    included,excluded,baseline,selected,comparison = sensitivity_analysis(data,[1])
+    alpha = selected[selected['Resident Name'].eq('Resident Alpha')].iloc[0]
+    assert alpha['Combined Mean (1–5)'] == 3.8
+    assert len(excluded) == 1 and len(included) == 3
+    assert comparison['Excluded evaluations'].sum() == 1
+    pd.testing.assert_frame_equal(before,data)
+    assert sensitivity_analysis(data,[])[3]['Combined Mean (1–5)'].tolist() == baseline['Combined Mean (1–5)'].tolist()
+
+
+def test_sensitivity_all_excluded_preserves_residents_unranked():
+    from appraisal import sensitivity_analysis
+    q,c = synthetic_data()
+    data,_ = join_remarks(prepare_quantitative(q),c)
+    _,excluded,baseline,selected,comparison = sensitivity_analysis(data,data['Row ID'].tolist())
+    assert len(selected) == len(baseline)
+    assert selected['Rank'].isna().all()
+    assert selected['Combined Mean (1–5)'].isna().all()
+    assert selected['Total evals'].eq(0).all()
+    assert comparison['Excluded evaluations'].sum() == len(data)
