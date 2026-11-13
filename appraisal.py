@@ -211,7 +211,7 @@ def add_flags(frame):
         if r['Comment match'] != 'Matched':
             f.append(r['Comment match'])
         flags.append('; '.join(f))
-    out['Audit flags'] = flags
+    out['Audit flags'] = pd.Series(flags, index=out.index, dtype='string')
     return out
 
 
@@ -299,11 +299,11 @@ def resident_narratives(scores, comments, resident_key, start=None, end=None):
     return result.sort_values(['Period','Source','Source row'], na_position='last').reset_index(drop=True)
 
 
-def sensitivity_analysis(frame, excluded_ids):
+def sensitivity_analysis(frame, excluded_ids, baseline_frame=None):
     """Recompute a clearly separate scenario; never mutate, delete or penalize source records."""
     excluded = frame[frame['Row ID'].isin(excluded_ids)].copy()
     included = frame[~frame['Row ID'].isin(excluded_ids)].copy()
-    baseline = resident_summary(frame)
+    baseline = resident_summary(frame if baseline_frame is None else baseline_frame)
     selected = resident_summary(included)
     if baseline.empty:
         return included, excluded, baseline, selected, pd.DataFrame()
@@ -326,3 +326,73 @@ def sensitivity_analysis(frame, excluded_ids):
     compare['Excluded evaluations'] = compare['Baseline evaluations'] - compare['Included evaluations']
     compare['Mean change'] = compare['Scenario mean'] - compare['Baseline mean']
     return included, excluded, baseline, selected, compare.drop(columns='Resident key')
+
+
+GM_SCENARIOS = {
+    'Current GM mapping': '(raw + 1) / 2; GM 1–9 maps to 1–5',
+    'Proposed GM mapping': '(raw − 1) / 2 for raw ≥3; GM 7→3 and 9→4; raw <3 is not scored',
+    'ID-only': 'ID evaluations scored; GM evidence retained but not used in scores',
+}
+
+
+def apply_gm_scenario(frame, scenario='Current GM mapping'):
+    """Apply an explicit exploratory scenario to a copy, preserving every source row."""
+    if scenario not in GM_SCENARIOS:
+        raise ValueError('Unknown GM scenario')
+    out = frame.copy(deep=True)
+    gm = out['Instrument group'].eq('GM')
+    out['GM scenario'] = scenario
+    out['GM cells below 3'] = 0
+    out['GM Overall below 3'] = False
+    out['Scenario note'] = ''
+    # Always calculate from raw values, never chain transformations from another scenario.
+    for col in SCORE_COLUMNS:
+        if scenario == 'Current GM mapping':
+            out.loc[gm, col] = (out.loc[gm, f'Raw {col}'] + 1) / 2
+        elif scenario == 'Proposed GM mapping':
+            raw = out[f'Raw {col}']
+            below = gm & raw.notna() & raw.lt(3)
+            out['GM cells below 3'] += below.astype(int)
+            if col == 'Overall':
+                out['GM Overall below 3'] = below
+            out.loc[gm, col] = ((raw - 1) / 2).where(raw.ge(3)).loc[gm]
+        else:
+            out.loc[gm, col] = np.nan
+    if scenario == 'Proposed GM mapping':
+        out.loc[gm, 'Scenario note'] = 'Exploratory GM mapping; anchor equivalence not established'
+        out.loc[out['GM cells below 3'].gt(0), 'Scenario note'] += '; GM raw <3 not scored: review source values'
+    elif scenario == 'ID-only':
+        out.loc[gm, 'Scenario note'] = 'GM not scored in ID-only scenario; source record retained'
+    out['Evaluation score'] = out['Overall']
+    out['Rated domains'] = out[DOMAINS].notna().sum(axis=1)
+    out['Domain mean'] = out[DOMAINS].mean(axis=1)
+    out = add_flags(out)
+    if scenario != 'Current GM mapping':
+        withheld = gm & out['Raw Overall'].notna() & out['Evaluation score'].isna()
+        out.loc[withheld, 'Audit flags'] = out.loc[withheld, 'Audit flags'].str.replace('Overall missing: not ranked', 'Overall withheld by score scenario: not ranked', regex=False)
+        out.loc[gm, 'Audit flags'] = out.loc[gm, 'Audit flags'].str.replace('No rated domains', 'No scored domains in this scenario', regex=False).str.replace('Partial domains (N.A)', 'Partial scored domain coverage (scenario)', regex=False)
+    out['Audit flags'] = out.apply(lambda r: '; '.join(x for x in [r['Audit flags'],r['Scenario note']] if x),axis=1) if len(out) else pd.Series(dtype=str)
+    return out
+
+
+def compare_gm_scenarios(frame, excluded_ids=()):
+    """Same manually included rows in all scenarios; denominators and ranks remain explicit."""
+    tables = []
+    counts = []
+    for name in GM_SCENARIOS:
+        mapped = apply_gm_scenario(frame, name)
+        included, excluded, baseline, summary, _ = sensitivity_analysis(mapped, excluded_ids, baseline_frame=frame)
+        if not summary.empty:
+            table = summary[['Resident Name','Rank','Combined Mean (1–5)','Valid scored evals','Total evals']].copy()
+            table.insert(0,'Scenario',name)
+            table = table.rename(columns={'Combined Mean (1–5)':'Mean','Total evals':'Manually included evaluations'})
+            table['Not scored'] = table['Manually included evaluations'] - table['Valid scored evals']
+            tables.append(table)
+        gm = included['Instrument group'].eq('GM')
+        counts.append({'Scenario':name,'Manually excluded':len(excluded),'Manually included':len(included),
+                       'Valid Overall scores':int(included['Evaluation score'].notna().sum()),
+                       'GM Overall scores used':int((gm & included['Evaluation score'].notna()).sum()),
+                       'GM rows not scored':int((gm & included['Evaluation score'].isna()).sum()),
+                       'GM Overall withheld (<3)':int(included['GM Overall below 3'].sum()),
+                       'GM score cells withheld (<3)':int(included['GM cells below 3'].sum())})
+    return pd.concat(tables,ignore_index=True) if tables else pd.DataFrame(), pd.DataFrame(counts)

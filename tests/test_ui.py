@@ -92,3 +92,41 @@ def test_individual_shows_qualitative_only_and_unmatched_comments(monkeypatch):
     for e in at.expander:
         if 'Narrative Only Assessor' in e.label:
             assert not list(e.dataframe)
+
+
+def test_gm_comparison_switch_keeps_exclusions_and_baseline():
+    at = AppTest.from_file(APP,default_timeout=30).run()
+    at.checkbox[0].check().run()
+    assert not at.exception
+    assert next(s for s in at.selectbox if s.label == 'Ranking score scenario').value == 'Current GM mapping'
+    next(m for m in at.multiselect if m.label == 'Exclude assessments from the ranking scenario').set_value([1]).run()
+    next(s for s in at.selectbox if s.label == 'Ranking score scenario').set_value('Proposed GM mapping').run()
+    assert not at.exception
+    assert next(m for m in at.multiselect if m.label == 'Exclude assessments from the ranking scenario').value == [1]
+    table = next(d.value for d in at.dataframe if 'Baseline mean' in d.value.columns)
+    beta = table[table['Resident Name'].eq('Resident Beta')].iloc[0]
+    assert beta['Baseline mean'] == 4
+    assert beta['Scenario mean'] == 3.5
+    next(s for s in at.selectbox if s.label == 'Ranking score scenario').set_value('ID-only').run()
+    assert not at.exception
+    assert next(m for m in at.multiselect if m.label == 'Exclude assessments from the ranking scenario').value == [1]
+    assert any('ID-only Mean (1–5)' in d.value.columns for d in at.dataframe)
+    next(s for s in at.selectbox if s.label == 'Ranking score scenario').set_value('Current GM mapping').run()
+    assert not at.exception
+    assert next(m for m in at.multiselect if m.label == 'Exclude assessments from the ranking scenario').value == [1]
+
+
+def test_proposed_mapping_shows_low_gm_review_rows(monkeypatch):
+    import appraisal
+    q,c = appraisal.synthetic_data()
+    q.loc[2, appraisal.SCORE_COLUMNS] = 2
+    monkeypatch.setattr(appraisal,'synthetic_data',lambda:(q,c))
+    at = AppTest.from_file(APP,default_timeout=30).run()
+    at.checkbox[0].check().run()
+    next(s for s in at.selectbox if s.label == 'Ranking score scenario').set_value('Proposed GM mapping').run()
+    assert not at.exception
+    assert any('raw values below 3' in w.value for w in at.warning)
+    review = next(d.value for d in at.dataframe if 'GM cells below 3' in d.value.columns)
+    assert review['Raw Overall'].iloc[0] == 2
+    assert review['GM cells below 3'].iloc[0] == 7
+    assert review['Evaluation score'].isna().all()

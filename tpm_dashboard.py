@@ -4,7 +4,7 @@ from hashlib import sha256
 import pandas as pd
 import streamlit as st
 from appraisal import (DOMAINS, INSTRUMENTS, ALIASES, prepare_quantitative, join_remarks,
-                       in_period, resident_summary, synthetic_data, workbook_bytes, resident_narratives, sensitivity_analysis)
+                       in_period, resident_summary, synthetic_data, workbook_bytes, resident_narratives, sensitivity_analysis, GM_SCENARIOS, apply_gm_scenario, compare_gm_scenarios)
 
 from visualizations import profile_figure, domain_summary, temporal_figure, comparison_figure
 
@@ -168,42 +168,65 @@ with ranking:
     st.subheader('Current-period summative standing')
     st.caption('Committee decision support, not a complete measure of merit or service contribution. Small numeric differences and sparse evidence require judgement.')
     exclusion_key = f"excluded_{dataset_key}_{start if periods else 'none'}_{end if periods else 'none'}"
+    st.subheader('GM mapping comparison')
+    gm_scenario = st.selectbox('Ranking score scenario', list(GM_SCENARIOS), key=f'gm_{dataset_key}')
+    st.caption(GM_SCENARIOS[gm_scenario])
+    if gm_scenario == 'Proposed GM mapping':
+        st.warning('The proposed mapping caps GM at 4 while ID can reach 5. Withholding GM values below 3 can raise a mean by changing its denominator. This is a sensitivity check, not a validated fairness correction.')
+    elif gm_scenario == 'ID-only':
+        st.info('ID-only changes the evidence mix. GM-only residents remain visible but unranked in this scenario.')
+    st.caption('Exploratory comparisons, not validated scale equivalence. The current mapping remains the unchanged baseline and is used in Individual SR. Changing this selector does not clear manual exclusions.')
     st.subheader('Assessment selection: sensitivity analysis')
-    st.caption('Default: include every current-period evaluation. Exclusions are a temporary scenario in this session only. No rows are deleted, no flags automatically exclude a row, and the Individual SR tab continues to show the baseline evidence. Changing workbook or appraisal period resets the selection.')
-    choices = {int(r['Row ID']): f"Row {r['Source row']} | {r['Resident Name']} | {r['Period']:%b %Y} | {r['Assessor original']} | {r['Assessment Type']} | score {r['Evaluation score']:.2f}" for _, r in current.iterrows()}
+    st.caption('Default: include every current-period evaluation. Exclusions are a temporary scenario in this session only. No rows are deleted, and narrative audit flags never exclude rows. The selected score scenario may leave GM values unscored, with counts shown below; and the Individual SR tab continues to show the baseline evidence. Changing workbook or appraisal period resets the selection.')
+    choices = {int(r['Row ID']): f"Row {r['Source row']} | {r['Resident Name']} | {r['Period']:%b %Y} | {r['Assessor original']} | {r['Assessment Type']} | baseline score {r['Evaluation score']:.2f}" for _, r in current.iterrows()}
     def clear_exclusions():
         st.session_state[exclusion_key] = []
     st.button('Restore all assessments', on_click=clear_exclusions)
     excluded_ids = st.multiselect('Exclude assessments from the ranking scenario', list(choices),
                                  format_func=choices.get, key=exclusion_key)
-    included, excluded, baseline, summary, comparison = sensitivity_analysis(current, excluded_ids)
+    scenario_data = apply_gm_scenario(current, gm_scenario)
+    included, excluded, baseline, summary, comparison = sensitivity_analysis(scenario_data, excluded_ids, baseline_frame=current)
+    all_scenarios, scenario_counts = compare_gm_scenarios(current, excluded_ids)
+    st.subheader('Three-way comparison: same assessment selection')
+    st.caption('All three scenarios use the same manual inclusions. “Not scored” includes missing/invalid Overall and scenario-specific GM omissions. A changed denominator can change the mean and rank; it is not evidence that one mapping is fairer. Below-3 cell counts include Overall as well as six domains.')
+    if not all_scenarios.empty:
+        st.dataframe(all_scenarios, hide_index=True, width='stretch')
+    st.dataframe(scenario_counts, hide_index=True, width='stretch')
+    review_gm = included[included['GM cells below 3'].gt(0)]
+    if len(review_gm):
+        st.warning(f'{len(review_gm)} GM evaluations contain raw values below 3 under the proposed mapping. These cells are missing, not extrapolated below 1. Review the originals; a missing mapped Overall cannot enter the score denominator.')
+        st.dataframe(review_gm[['Source row','Resident Name','Period','Assessor original','Raw Overall'] + [f'Raw {d}' for d in DOMAINS] + ['Evaluation score','GM cells below 3','Audit flags']], hide_index=True, width='stretch')
     a, b, c = st.columns(3)
     a.metric('Baseline evaluations', len(current))
     b.metric('Included in scenario', len(included))
     c.metric('Excluded in scenario', len(excluded))
     if len(excluded):
-        st.warning(f'Sensitivity scenario active: {len(excluded)} evaluations excluded, including {int(excluded["Evaluation score"].notna().sum())} with valid scores. This is not a change to the baseline appraisal record.')
+        st.warning(f'Sensitivity scenario active: {len(excluded)} evaluations excluded, including {int(excluded["Evaluation score"].notna().sum())} with valid scenario scores. This is not a change to the baseline appraisal record.')
         st.dataframe(excluded[['Source row','Resident Name','Period','Assessor original','Assessment Type','Evaluation score','Audit flags']], hide_index=True, width='stretch')
-        st.subheader('Baseline versus selected assessments')
+    if len(excluded) or gm_scenario != 'Current GM mapping':
+        st.subheader('Unchanged baseline versus selected score scenario')
         st.dataframe(comparison, hide_index=True, width='stretch')
         with st.expander('Unchanged baseline ranking'):
             st.dataframe(baseline[['Rank','Resident Name','Combined Mean (1–5)','Median (1–5)','Total evals']], hide_index=True, width='stretch')
-        st.subheader('Selected-assessment scenario ranking')
+        st.subheader(f'Ranking: {gm_scenario}, selected assessments')
     else:
-        st.caption('No exclusions: the chart and ranking below are the complete current-period baseline.')
+        st.caption('No exclusions and current mapping: the chart and ranking below are the complete current-period baseline.')
     if summary.empty:
         st.info('No eligible records in this period.')
     else:
         if summary['Combined Mean (1–5)'].notna().any():
-            st.plotly_chart(comparison_figure(summary), width='stretch', key='overall_comparison')
-            st.caption('Bars and the tables below use the same selected assessments. They show evaluation-weighted means, not certainty or a complete merit score. Hover for evidence counts and range; review the separate ID/GM breakdown below.')
+            chart = comparison_figure(summary)
+            chart.update_layout(yaxis_title='ID-only mean (1–5)' if gm_scenario == 'ID-only' else 'Scenario mean (1–5)')
+            st.plotly_chart(chart, width='stretch', key='overall_comparison')
+            st.caption('Bars and the tables below use the selected score scenario and the same manually included assessments. They show evaluation-weighted means, not certainty or a complete merit score. Hover for evidence counts and range; review the separate ID/GM breakdown below.')
         if not summary['Combined Mean (1–5)'].notna().any():
             st.info('No valid scored assessments remain in this scenario. Residents are shown unranked; restore assessments to recover the baseline.')
         columns = ['Rank', 'Resident Name', 'Combined Mean (1–5)', 'Median (1–5)', 'Evaluation range',
                    'ID evals', 'GM evals', 'Valid scored evals', 'Unique assessors', 'Context / Audit Flags']
-        st.dataframe(summary[columns], hide_index=True, width='stretch',
-                     column_config={c: st.column_config.NumberColumn(format='%.2f') for c in ['Combined Mean (1–5)', 'Median (1–5)']})
+        score_label = 'ID-only Mean (1–5)' if gm_scenario == 'ID-only' else 'Combined Mean (1–5)'
+        st.dataframe(summary[columns].rename(columns={'Combined Mean (1–5)': score_label}), hide_index=True, width='stretch',
+                     column_config={c: st.column_config.NumberColumn(format='%.2f') for c in [score_label, 'Median (1–5)']})
         st.subheader('Instrument mix and evidence coverage')
         st.dataframe(summary[['Resident Name', 'ID mean (1–5)', 'GM mean (original 1–9)', 'GM mean (mapped 1–5)',
                               'Total evals', 'Valid scored evals', 'Unknown evals', 'Domain coverage', 'Flagged evals']], hide_index=True)
-        st.caption('ID/GM evaluation counts include forms with a missing Overall; Valid scored evals is the actual mean denominator. No inferred score is assigned to unobserved domains.')
+        st.caption('ID/GM evaluation counts include forms with a missing Overall; Valid scored evals is the actual mean denominator. No inferred score is assigned to unobserved domains. In ID-only mode, GM forms remain visible in source counts but contribute no mapped score or domain values.')

@@ -214,3 +214,65 @@ def test_sensitivity_all_excluded_preserves_residents_unranked():
     assert selected['Combined Mean (1–5)'].isna().all()
     assert selected['Total evals'].eq(0).all()
     assert comparison['Excluded evaluations'].sum() == len(data)
+
+
+@pytest.mark.parametrize('raw,expected', [(1,None),(2,None),(2.99,None),(3,1),(7,3),(9,4)])
+def test_proposed_gm_mapping_domain_and_overall(raw,expected):
+    x = process([qrow(**{'Assessment Type':'GM MPE', **{d:raw for d in SCORE_COLUMNS}})])
+    before = x.copy(deep=True)
+    proposed = apply_gm_scenario(x,'Proposed GM mapping')
+    if expected is None:
+        assert proposed[SCORE_COLUMNS].isna().all().all()
+        assert proposed['GM cells below 3'].iloc[0] == 7
+        assert proposed['GM Overall below 3'].iloc[0]
+        assert 'raw <3 not scored' in proposed['Audit flags'].iloc[0]
+    else:
+        assert proposed[SCORE_COLUMNS].eq(expected).all().all()
+        assert proposed['GM cells below 3'].iloc[0] == 0
+    assert proposed['Raw Overall'].iloc[0] == raw
+    pd.testing.assert_frame_equal(x,before)
+
+
+def test_id_only_keeps_records_and_id_values_but_not_gm_scores():
+    x = process([qrow(Overall=4),qrow(**{'Resident Name':'GM only','Assessment Type':'GM MPE','Overall':8})])
+    id_only = apply_gm_scenario(x,'ID-only')
+    assert len(id_only) == 2
+    assert id_only['Evaluation score'].iloc[0] == 4
+    assert pd.isna(id_only['Evaluation score'].iloc[1])
+    assert id_only['Raw Overall'].iloc[1] == 8
+    assert 'source record retained' in id_only['Audit flags'].iloc[1]
+    _,_,base,selected,_ = sensitivity_analysis(id_only,[],baseline_frame=x)
+    assert pd.isna(selected[selected['Resident Name'].eq('GM only')]['Rank'].iloc[0])
+    assert base[base['Resident Name'].eq('GM only')]['Combined Mean (1–5)'].iloc[0] == 4.5
+
+
+def test_three_way_comparison_same_exclusions_and_counts():
+    x = process([qrow(Overall=4),qrow(**{'Assessment Type':'GM MPE','Overall':7}),
+                 qrow(**{'Assessment Type':'GM MPE','Overall':2})])
+    table,counts = compare_gm_scenarios(x,[0])
+    assert counts['Manually excluded'].eq(1).all()
+    assert counts['Manually included'].eq(2).all()
+    means = table.set_index('Scenario')['Mean']
+    assert means['Current GM mapping'] == 2.75
+    assert means['Proposed GM mapping'] == 3
+    assert pd.isna(means['ID-only'])
+    proposed = counts[counts['Scenario'].eq('Proposed GM mapping')].iloc[0]
+    assert proposed['GM Overall withheld (<3)'] == 1
+    assert proposed['GM Overall scores used'] == 1
+    assert proposed['GM rows not scored'] == 1
+    assert table.loc[table['Scenario'].eq('ID-only'),'Rank'].isna().all()
+
+
+def test_mapping_switch_restores_default_from_raw_not_transformed():
+    x = process([qrow(**{'Assessment Type':'GM MPE','Overall':7})])
+    changed = apply_gm_scenario(x,'Proposed GM mapping')
+    assert apply_gm_scenario(changed)['Evaluation score'].iloc[0] == 4
+    assert apply_gm_scenario(apply_gm_scenario(x,'ID-only'))['Evaluation score'].iloc[0] == 4
+
+
+def test_gm_comparisons_empty_and_all_excluded():
+    x = process([qrow(**{'Assessment Type':'GM MPE','Overall':7})])
+    table,counts = compare_gm_scenarios(x,[0])
+    assert table['Rank'].isna().all()
+    assert counts['Valid Overall scores'].eq(0).all()
+    assert compare_gm_scenarios(x.iloc[0:0])[0].empty

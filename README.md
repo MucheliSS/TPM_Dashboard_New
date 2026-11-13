@@ -10,6 +10,7 @@ Two tabs keep the workflow focused: **Individual SR** and **Overall Ranking**. A
 
 - **Individual SR:** assessor profile line charts, average-domain tables with coverage counts, optional monthly trends, scores and all source narratives, including unmatched or qualitative-only records.
 - **Overall ranking:** comparison bar chart plus current-period mean, median, range, ID/GM mix, assessor counts and audit flags.
+- **GM mapping comparison:** current mapping, proposed mapping and ID-only, with side-by-side scores, ranks and denominators.
 - **Ranking sensitivity:** temporarily exclude selected assessments, compare baseline versus scenario, and restore all assessments in one click.
 - **Optional prior-posting comparison:** shared residents only; never changes the current-period ranking.
 
@@ -50,6 +51,22 @@ Common date, assessor and comment column aliases are supported. Optional `Assess
 - Zero, blank and N.A are missing. Invalid values and unknown instruments are not scored. Partial-domain forms retain any valid supplied Overall, with coverage flagged for review.
 - Only the selected assessment months enter ranking. Missing dates or resident names are excluded; missing Overall remains unranked. Filenames and submission timestamps do not determine the period.
 - Ranking uses unrounded means. Exact ties share competition ranks: **1, 1, 3**. Rounded differences are not evidence of meaningful performance differences.
+
+## GM comparison scenarios
+
+The ranking selector offers three **exploratory** options. The unchanged baseline and Individual SR view always use the current mapping.
+
+| Scenario | GM treatment |
+|---|---|
+| Current GM mapping (default) | `(raw + 1) / 2`: 1→1, 7→4, 9→5 |
+| Proposed GM mapping | `(raw − 1) / 2` for raw ≥3: 3→1, 7→3, 9→4 |
+| ID-only | GM records remain visible, but contribute no mapped scores |
+
+Under the proposed mapping, raw GM values **below 3 become missing and are flagged for review**, not extrapolated below 1 or clipped. This applies independently to Overall and each domain. A withheld Overall does not enter the mean/rank denominator; domain values are not substituted for it. Source values and rows are preserved.
+
+All three comparisons use the **same manual assessment exclusions**. Changing mapping does not clear those exclusions. The app shows each resident’s mean, rank and scored/unscored counts, plus GM values withheld by the proposed rule. The selected scenario drives its chart, ranking and coverage table; the full original baseline remains available separately.
+
+Neither numerical mapping establishes equivalent rating anchors. Proposed mapping caps the highest GM value at 4, while ID can reach 5; ID-only changes the evidence mix; withholding low GM values can raise a mean. These are sensitivity checks, not validated corrections or a basis for silently discarding assessments.
 
 ## Comments and audit flags
 
