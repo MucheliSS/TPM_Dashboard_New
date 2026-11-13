@@ -9,8 +9,8 @@ A Streamlit dashboard for reviewing Senior Resident assessment evidence during *
 Two tabs keep the workflow focused: **Individual SR** and **Overall Ranking**. All qualitative comments are available within Individual SR.
 
 - **Individual SR:** assessor profile line charts, average-domain tables with coverage counts, optional monthly trends, scores and all source narratives, including unmatched or qualitative-only records.
-- **Overall ranking:** comparison bar chart plus current-period mean, median, range, ID/GM mix, assessor counts and audit flags.
-- **GM mapping comparison:** current mapping, proposed mapping and ID-only, with side-by-side scores, ranks and denominators.
+- **Overall ranking:** comparison bar chart plus current-period mean, median, range, ID/GM mix and assessor counts.
+- **Score mapping:** choose Loose GM mapping, Tight GM mapping or ID-only; the selection applies to both tabs.
 - **Ranking sensitivity:** temporarily exclude selected assessments, compare baseline versus scenario, and restore all assessments in one click.
 - **Optional prior-posting comparison:** shared residents only; never changes the current-period ranking.
 
@@ -54,19 +54,19 @@ Common date, assessor and comment column aliases are supported. Optional `Assess
 
 ## GM comparison scenarios
 
-The sidebar score-mapping selector offers three **exploratory** options and applies consistently to **both tabs**: individual metrics, domain tables, profiles, trends and the ranking scenario. The unchanged comparison baseline uses the current mapping.
+The sidebar score-mapping selector offers three **exploratory** options and applies consistently to **both tabs**: individual metrics, domain tables, profiles, trends and the ranking scenario. The unchanged comparison baseline uses the Loose mapping.
 
 | Scenario | GM treatment |
 |---|---|
-| Current GM mapping (default) | `(raw + 1) / 2`: 1→1, 7→4, 9→5 |
-| Proposed GM mapping | `(raw − 1) / 2` for raw ≥3: 3→1, 7→3, 9→4 |
+| Loose GM mapping (default) | `(raw + 1) / 2`: 1→1, 7→4, 9→5 |
+| Tight GM mapping | `(raw − 1) / 2` for raw ≥3: 3→1, 7→3, 9→4 |
 | ID-only | GM records remain visible, but contribute no mapped scores |
 
-Under the proposed mapping, raw GM values **below 3 become missing and are flagged for review**, not extrapolated below 1 or clipped. This applies independently to Overall and each domain. A withheld Overall does not enter the mean/rank denominator; domain values are not substituted for it. Source values and rows are preserved.
+Under the Tight mapping, raw GM values **below 3 become missing and are flagged for review**, not extrapolated below 1 or clipped. This applies independently to Overall and each domain. A withheld Overall does not enter the mean/rank denominator; domain values are not substituted for it. Source values and rows are preserved.
 
-All three comparisons use the **same manual assessment exclusions**. Changing mapping does not clear those exclusions. The app shows each resident’s mean, rank and scored/unscored counts, plus GM values withheld by the proposed rule. The selected mapping drives both tabs. Manual assessment exclusions apply only to the ranking sensitivity scenario; Individual SR keeps every source evaluation visible under that same mapping. The full original baseline remains available separately.
+Changing mapping does not clear manual assessment exclusions. The ranking shows the selected mapping only, without a three-way comparison or audit columns. Individual evaluation flags remain available for reviewing source evidence. The selected mapping drives both tabs. Manual assessment exclusions apply only to the ranking sensitivity scenario; Individual SR keeps every source evaluation visible under that same mapping. The full original baseline remains available separately.
 
-Neither numerical mapping establishes equivalent rating anchors. Proposed mapping caps the highest GM value at 4, while ID can reach 5; ID-only changes the evidence mix; withholding low GM values can raise a mean. These are sensitivity checks, not validated corrections or a basis for silently discarding assessments.
+Neither numerical mapping establishes equivalent rating anchors. Tight mapping caps the highest GM value at 4, while ID can reach 5; ID-only changes the evidence mix; withholding low GM values can raise a mean. These are sensitivity checks, not validated corrections or a basis for silently discarding assessments.
 
 ## Comments and audit flags
 

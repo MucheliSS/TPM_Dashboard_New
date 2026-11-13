@@ -220,7 +220,7 @@ def test_sensitivity_all_excluded_preserves_residents_unranked():
 def test_proposed_gm_mapping_domain_and_overall(raw,expected):
     x = process([qrow(**{'Assessment Type':'GM MPE', **{d:raw for d in SCORE_COLUMNS}})])
     before = x.copy(deep=True)
-    proposed = apply_gm_scenario(x,'Proposed GM mapping')
+    proposed = apply_gm_scenario(x,'Tight GM mapping')
     if expected is None:
         assert proposed[SCORE_COLUMNS].isna().all().all()
         assert proposed['GM cells below 3'].iloc[0] == 7
@@ -253,10 +253,10 @@ def test_three_way_comparison_same_exclusions_and_counts():
     assert counts['Manually excluded'].eq(1).all()
     assert counts['Manually included'].eq(2).all()
     means = table.set_index('Scenario')['Mean']
-    assert means['Current GM mapping'] == 2.75
-    assert means['Proposed GM mapping'] == 3
+    assert means['Loose GM mapping'] == 2.75
+    assert means['Tight GM mapping'] == 3
     assert pd.isna(means['ID-only'])
-    proposed = counts[counts['Scenario'].eq('Proposed GM mapping')].iloc[0]
+    proposed = counts[counts['Scenario'].eq('Tight GM mapping')].iloc[0]
     assert proposed['GM Overall withheld (<3)'] == 1
     assert proposed['GM Overall scores used'] == 1
     assert proposed['GM rows not scored'] == 1
@@ -265,7 +265,7 @@ def test_three_way_comparison_same_exclusions_and_counts():
 
 def test_mapping_switch_restores_default_from_raw_not_transformed():
     x = process([qrow(**{'Assessment Type':'GM MPE','Overall':7})])
-    changed = apply_gm_scenario(x,'Proposed GM mapping')
+    changed = apply_gm_scenario(x,'Tight GM mapping')
     assert apply_gm_scenario(changed)['Evaluation score'].iloc[0] == 4
     assert apply_gm_scenario(apply_gm_scenario(x,'ID-only'))['Evaluation score'].iloc[0] == 4
 

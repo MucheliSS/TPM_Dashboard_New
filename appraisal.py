@@ -338,13 +338,13 @@ def sensitivity_analysis(frame, excluded_ids, baseline_frame=None):
 
 
 GM_SCENARIOS = {
-    'Current GM mapping': '(raw + 1) / 2; GM 1–9 maps to 1–5',
-    'Proposed GM mapping': '(raw − 1) / 2 for raw ≥3; GM 7→3 and 9→4; raw <3 is not scored',
+    'Loose GM mapping': '(raw + 1) / 2; GM 1–9 maps to 1–5',
+    'Tight GM mapping': '(raw − 1) / 2 for raw ≥3; GM 7→3 and 9→4; raw <3 is not scored',
     'ID-only': 'ID evaluations scored; GM evidence retained but not used in scores',
 }
 
 
-def apply_gm_scenario(frame, scenario='Current GM mapping'):
+def apply_gm_scenario(frame, scenario='Loose GM mapping'):
     """Apply an explicit exploratory scenario to a copy, preserving every source row."""
     if scenario not in GM_SCENARIOS:
         raise ValueError('Unknown GM scenario')
@@ -356,9 +356,9 @@ def apply_gm_scenario(frame, scenario='Current GM mapping'):
     out['Scenario note'] = ''
     # Always calculate from raw values, never chain transformations from another scenario.
     for col in SCORE_COLUMNS:
-        if scenario == 'Current GM mapping':
+        if scenario == 'Loose GM mapping':
             out.loc[gm, col] = (out.loc[gm, f'Raw {col}'] + 1) / 2
-        elif scenario == 'Proposed GM mapping':
+        elif scenario == 'Tight GM mapping':
             raw = out[f'Raw {col}']
             below = gm & raw.notna() & raw.lt(3)
             out['GM cells below 3'] += below.astype(int)
@@ -367,7 +367,7 @@ def apply_gm_scenario(frame, scenario='Current GM mapping'):
             out.loc[gm, col] = ((raw - 1) / 2).where(raw.ge(3)).loc[gm]
         else:
             out.loc[gm, col] = np.nan
-    if scenario == 'Proposed GM mapping':
+    if scenario == 'Tight GM mapping':
         out.loc[gm, 'Scenario note'] = 'Exploratory GM mapping; anchor equivalence not established'
         out.loc[out['GM cells below 3'].gt(0), 'Scenario note'] += '; GM raw <3 not scored: review source values'
     elif scenario == 'ID-only':
@@ -376,7 +376,7 @@ def apply_gm_scenario(frame, scenario='Current GM mapping'):
     out['Rated domains'] = out[DOMAINS].notna().sum(axis=1)
     out['Domain mean'] = out[DOMAINS].mean(axis=1)
     out = add_flags(out)
-    if scenario != 'Current GM mapping':
+    if scenario != 'Loose GM mapping':
         withheld = gm & out['Raw Overall'].notna() & out['Evaluation score'].isna()
         out.loc[withheld, 'Audit flags'] = out.loc[withheld, 'Audit flags'].str.replace('Overall missing: not ranked', 'Overall withheld by score scenario: not ranked', regex=False)
         out.loc[gm, 'Audit flags'] = out.loc[gm, 'Audit flags'].str.replace('No rated domains', 'No scored domains in this scenario', regex=False).str.replace('Partial domains (N.A)', 'Partial scored domain coverage (scenario)', regex=False)
