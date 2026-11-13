@@ -6,9 +6,9 @@ A Streamlit dashboard for reviewing Senior Resident assessment evidence during *
 
 ## What it shows
 
-- **Individual SR:** evaluation scores, deviation from the resident’s median, domain coverage and verbatim comments.
-- **Narrative audit:** scores beside comments, plus unmatched or ambiguous feedback for separate review.
-- **Overall ranking:** current-period mean, median, range, ID/GM mix, assessor counts and audit flags.
+- **Individual SR:** assessor profile line charts, average-domain tables with coverage counts, optional monthly trends, scores and verbatim comments.
+- **Narrative audit:** filter comments by resident, assessor, month and literal text; unmatched or ambiguous feedback stays separate.
+- **Overall ranking:** comparison bar chart plus current-period mean, median, range, ID/GM mix, assessor counts and audit flags.
 - **Optional prior-posting comparison:** shared residents only; never changes the current-period ranking.
 
 ## Quick start
@@ -25,7 +25,8 @@ streamlit run tpm_dashboard.py
 1. Choose **Use synthetic demonstration** to explore fictional data and download an Excel template.
 2. Upload an unencrypted `.xlsx` workbook.
 3. Select the intended assessment start and end months. Check the actual date range and import warnings.
-4. Read the individual narratives and instrument breakdown before using the ranking in committee discussion.
+4. Explore the assessor profiles and optional trends. Profile-month filters affect only the profile chart and domain table; comment filters never alter rankings.
+5. Read the individual narratives and instrument breakdown before using the ranking in committee discussion.
 
 PDF exports are useful for checking structure, but are **not** supported app inputs.
 

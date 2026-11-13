@@ -1,10 +1,11 @@
 """Summative appraisal evidence dashboard. Run: streamlit run tpm_dashboard.py."""
 from io import BytesIO
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 from appraisal import (DOMAINS, INSTRUMENTS, ALIASES, prepare_quantitative, join_remarks,
                        in_period, resident_summary, synthetic_data, workbook_bytes)
+
+from visualizations import profile_figure, domain_summary, temporal_figure, comparison_figure, filter_comments
 
 st.set_page_config(page_title='SR appraisal evidence', page_icon='📊', layout='wide')
 st.title('Senior Resident appraisal evidence')
@@ -59,7 +60,7 @@ with st.sidebar:
         current = scores.iloc[0:0].copy()
     previous = st.file_uploader('Optional prior-posting workbook', type=['xlsx'])
 
-with st.expander('Import validation and scoring rules', expanded=True):
+with st.expander('Import validation and scoring rules', expanded=False):
     a, b, c, d = st.columns(4)
     a.metric('Quantitative rows', len(scores))
     b.metric('In selected period', len(current))
@@ -77,6 +78,12 @@ with st.expander('Import validation and scoring rules', expanded=True):
     if len(invalid):
         st.warning(f'{len(invalid)} rows need import review. Unknown dates cannot enter the current-period ranking.')
         st.dataframe(invalid[['Source row', 'Resident Name', 'Assessment Type', 'Period', 'Audit flags']], hide_index=True)
+        with st.expander('Review excluded or invalid evaluation details'):
+            st.caption('Source evidence only. Missing dates and identities stay outside current-period rankings.')
+            st.dataframe(invalid[['Source row', 'Resident Name', 'Assessor original', 'Assessment Type', 'Period', 'Raw Overall'] + DOMAINS + ['Remarks', 'Audit flags']], hide_index=True, width='stretch')
+            for _, record in invalid.iterrows():
+                st.write(f"Row {record['Source row']} · {record['Resident Name']}")
+                st.text(record['Remarks'] or 'No matched or inline remarks available.')
 
 individual, narrative, ranking = st.tabs(['📊 Individual SR', '💬 Score and narrative audit', '🏆 Overall Ranking'])
 with individual:
@@ -94,6 +101,25 @@ with individual:
         y.metric('Median (1–5)', f'{median:.2f}' if pd.notna(median) else 'Not scored')
         z.metric('Evaluations / unique assessors', f"{len(data)} / {data.loc[data['Assessor key'].ne(''), 'Assessor key'].nunique()}")
         st.caption('A deviation from this resident’s period median describes disagreement. It does not establish assessor leniency or justify an adjustment.')
+        st.subheader('Assessment profile')
+        profile_month = st.selectbox('Profile month', ['All selected months'] + sorted(data['Period'].dt.strftime('%Y-%m').unique()))
+        profile_data = data if profile_month == 'All selected months' else data[data['Period'].dt.strftime('%Y-%m').eq(profile_month)]
+        st.caption('Each line is one evaluation, not an assessor average. Repeated assessments remain separate; missing domains leave gaps. GM values are linearly rescaled.')
+        if profile_data[DOMAINS].notna().any().any():
+            st.plotly_chart(profile_figure(profile_data), width='stretch', key='assessment_profiles')
+        else:
+            st.info('No valid domain scores are available for this resident.')
+        st.subheader('Average domain scores')
+        st.caption('Domain averages follow the profile-month filter; the period-level metrics and ranking above do not change.')
+        st.dataframe(domain_summary(profile_data), hide_index=True, width='stretch',
+                     column_config={'Mean (1–5)': st.column_config.NumberColumn(format='%.2f')})
+        with st.expander('Optional: temporal trends', expanded=False):
+            st.caption('Monthly domain means within the selected appraisal period. Counts vary by domain; unobserved months leave gaps. This descriptive view does not curve scores or add a velocity ranking.')
+            if data[DOMAINS].notna().any().any():
+                st.plotly_chart(temporal_figure(data), width='stretch', key='temporal_trends')
+            else:
+                st.info('No valid scores are available for a temporal chart.')
+        st.subheader('Scores and assessment context')
         cols = ['Source row', 'Period', 'Assessment Type', 'Assessor original', 'Raw Overall', 'Evaluation score',
                 'Domain mean', 'Delta vs resident median', 'Rated domains', 'Comment match', 'Remarks', 'Audit flags']
         st.dataframe(data[cols], hide_index=True, width='stretch',
@@ -108,11 +134,6 @@ with individual:
                 st.caption(row['Audit flags'] or 'No automatic flags. This does not establish evidence quality.')
                 st.dataframe(pd.DataFrame({'Domain': DOMAINS, 'Mapped score': [row[d] for d in DOMAINS],
                                            'Original score': [row[f'Raw {d}'] for d in DOMAINS]}), hide_index=True)
-        plot = data.melt(id_vars=['Source row', 'Period', 'Assessor original'], value_vars=DOMAINS,
-                         var_name='Domain', value_name='Mapped score').dropna(subset=['Mapped score'])
-        if not plot.empty:
-            fig = px.scatter(plot, x='Domain', y='Mapped score', color='Assessor original', hover_data=['Source row', 'Period'], range_y=[0.8, 5.2])
-            st.plotly_chart(fig, width='stretch')
         if previous:
             try:
                 prior, _ = load_workbook(previous.getvalue())
@@ -131,12 +152,39 @@ with individual:
             except Exception:
                 st.warning('Prior workbook could not be parsed. Current-period results are unchanged.')
 with narrative:
+    st.subheader('Filter comments')
+    st.caption('Filters affect this comments tab only, not scores or ranking. Search matches literal text, not sentiment.')
+    context = pd.concat([current, comments], ignore_index=True)
+    resident_names = dict(zip(context['Resident key'], context['Resident Name']))
+    assessor_names = dict(zip(context['Assessor key'], context['Assessor original']))
+    f1, f2, f3 = st.columns(3)
+    resident_filter = f1.multiselect('Residents', sorted(k for k in resident_names if k), format_func=resident_names.get)
+    assessor_filter = f2.multiselect('Assessors', sorted(k for k in assessor_names if k), format_func=assessor_names.get)
+    month_options = sorted(context['Period'].dt.strftime('%Y-%m').fillna('Unknown month').unique())
+    month_filter = f3.multiselect('Assessment months', month_options)
+    query = st.text_input('Search remarks')
+    filtered = filter_comments(current, resident_filter, assessor_filter, month_filter, query)
     st.subheader('Current-period evaluation evidence')
-    st.dataframe(current[['Source row', 'Resident Name', 'Period', 'Assessor original', 'Evaluation score', 'Remarks', 'Audit flags']], hide_index=True, width='stretch')
+    st.caption(f'{len(filtered)} of {len(current)} current-period evaluations shown.')
+    if filtered.empty:
+        st.info('No evaluation comments match these filters. Clear a filter to broaden the view.')
+    st.dataframe(filtered[['Source row', 'Resident Name', 'Period', 'Assessor original', 'Evaluation score', 'Remarks', 'Audit flags']], hide_index=True, width='stretch')
+    for _, row in filtered.iterrows():
+        with st.expander(f"{row['Resident Name']} · {row['Period']:%b %Y} · {row['Assessor original']} · row {row['Source row']}"):
+            st.text(row['Remarks'] or 'No matched or inline remark available.')
     st.subheader('Unmatched or ambiguous qualitative records')
-    st.caption('Shown separately, not attributed to a scored evaluation and never used to change rankings. May include records outside the selected period.')
+    st.caption('Not attributed to a scored evaluation and never used to change rankings. The same comments filters apply here.')
+    include_outside = st.checkbox('Include unmatched records outside the appraisal period or with unknown dates')
     unmatched = comments[comments['Match status'].ne('Matched')]
+    if not include_outside:
+        unmatched = in_period(unmatched, start, end) if periods else unmatched.iloc[0:0]
+    unmatched = filter_comments(unmatched, resident_filter, assessor_filter, month_filter, query)
     st.dataframe(unmatched[['Source row', 'Resident Name', 'Period', 'Assessor original', 'Remarks', 'Match status']], hide_index=True, width='stretch')
+    for _, row in unmatched.iterrows():
+        date_label = row['Period'].strftime('%b %Y') if pd.notna(row['Period']) else 'Unknown month'
+        with st.expander(f"Unmatched row {row['Source row']} · {row['Resident Name']} · {date_label} · {row['Assessor original']}"):
+            st.text(row['Remarks'] or 'No remark supplied.')
+            st.caption(row['Match status'])
 with ranking:
     st.subheader('Current-period summative standing')
     st.caption('Committee decision support, not a complete measure of merit or service contribution. Small numeric differences and sparse evidence require judgement.')
@@ -144,6 +192,9 @@ with ranking:
     if summary.empty:
         st.info('No eligible records in this period.')
     else:
+        if summary['Combined Mean (1–5)'].notna().any():
+            st.plotly_chart(comparison_figure(summary), width='stretch', key='overall_comparison')
+            st.caption('Bars show evaluation-weighted means, not certainty or a complete merit score. Hover for evidence counts and range; review the separate ID/GM breakdown below.')
         columns = ['Rank', 'Resident Name', 'Combined Mean (1–5)', 'Median (1–5)', 'Evaluation range',
                    'ID evals', 'GM evals', 'Valid scored evals', 'Unique assessors', 'Context / Audit Flags']
         st.dataframe(summary[columns], hide_index=True, width='stretch',
