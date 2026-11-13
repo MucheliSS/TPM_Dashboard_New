@@ -6,7 +6,7 @@ import streamlit as st
 from appraisal import (DOMAINS, INSTRUMENTS, ALIASES, prepare_quantitative, join_remarks,
                        in_period, resident_summary, synthetic_data, workbook_bytes, resident_narratives, sensitivity_analysis)
 
-from visualizations import profile_figure, domain_summary, temporal_figure, comparison_figure, filter_comments
+from visualizations import profile_figure, domain_summary, temporal_figure, comparison_figure
 
 st.set_page_config(page_title='SR appraisal evidence', page_icon='📊', layout='wide')
 st.title('Senior Resident appraisal evidence')
@@ -92,7 +92,7 @@ if len(comments) and not comments['Remarks'].str.strip().ne('').any():
     st.warning('Qualitative rows were loaded but no narrative text was found. Check the original Excel comment headers and cells. No comments have been invented or inferred.')
     st.caption('Detected narrative source: ' + ', '.join(comments['Remarks source'].unique()))
 
-individual, narrative, ranking = st.tabs(['📊 Individual SR', '💬 Score and narrative audit', '🏆 Overall Ranking'])
+individual, ranking = st.tabs(['📊 Individual SR', '🏆 Overall Ranking'])
 with individual:
     resident_catalog = pd.concat([scores[['Resident key', 'Resident Name']], comments[['Resident key', 'Resident Name']]], ignore_index=True)
     if not resident_catalog['Resident key'].ne('').any():
@@ -164,46 +164,12 @@ with individual:
                     st.info('This resident is not shared across the two workbooks.')
             except Exception:
                 st.warning('Prior workbook could not be parsed. Current-period results are unchanged.')
-with narrative:
-    st.subheader('Filter comments')
-    st.caption('Filters affect this comments tab only, not scores or ranking. Search matches literal text, not sentiment.')
-    context = pd.concat([current, comments], ignore_index=True)
-    resident_names = dict(zip(context['Resident key'], context['Resident Name']))
-    assessor_names = dict(zip(context['Assessor key'], context['Assessor original']))
-    f1, f2, f3 = st.columns(3)
-    resident_filter = f1.multiselect('Residents', sorted(k for k in resident_names if k), format_func=resident_names.get)
-    assessor_filter = f2.multiselect('Assessors', sorted(k for k in assessor_names if k), format_func=assessor_names.get)
-    month_options = sorted(context['Period'].dt.strftime('%Y-%m').fillna('Unknown month').unique())
-    month_filter = f3.multiselect('Assessment months', month_options)
-    query = st.text_input('Search remarks')
-    filtered = filter_comments(current, resident_filter, assessor_filter, month_filter, query)
-    st.subheader('Current-period evaluation evidence')
-    st.caption(f'{len(filtered)} of {len(current)} current-period evaluations shown.')
-    if filtered.empty:
-        st.info('No evaluation comments match these filters. Clear a filter to broaden the view.')
-    st.dataframe(filtered[['Source row', 'Resident Name', 'Period', 'Assessor original', 'Evaluation score', 'Remarks', 'Audit flags']], hide_index=True, width='stretch')
-    for _, row in filtered.iterrows():
-        with st.expander(f"{row['Resident Name']} · {row['Period']:%b %Y} · {row['Assessor original']} · row {row['Source row']}"):
-            st.text(row['Remarks'] or 'No matched or inline remark available.')
-    st.subheader('Unmatched or ambiguous qualitative records')
-    st.caption('Not attributed to a scored evaluation and never used to change rankings. The same comments filters apply here.')
-    include_outside = st.checkbox('Include unmatched records outside the appraisal period or with unknown dates')
-    unmatched = comments[comments['Match status'].ne('Matched')]
-    if not include_outside:
-        unmatched = in_period(unmatched, start, end) if periods else unmatched.iloc[0:0]
-    unmatched = filter_comments(unmatched, resident_filter, assessor_filter, month_filter, query)
-    st.dataframe(unmatched[['Source row', 'Resident Name', 'Period', 'Assessor original', 'Remarks', 'Match status']], hide_index=True, width='stretch')
-    for _, row in unmatched.iterrows():
-        date_label = row['Period'].strftime('%b %Y') if pd.notna(row['Period']) else 'Unknown month'
-        with st.expander(f"Unmatched row {row['Source row']} · {row['Resident Name']} · {date_label} · {row['Assessor original']}"):
-            st.text(row['Remarks'] or 'No remark supplied.')
-            st.caption(row['Match status'])
 with ranking:
     st.subheader('Current-period summative standing')
     st.caption('Committee decision support, not a complete measure of merit or service contribution. Small numeric differences and sparse evidence require judgement.')
     exclusion_key = f"excluded_{dataset_key}_{start if periods else 'none'}_{end if periods else 'none'}"
     st.subheader('Assessment selection: sensitivity analysis')
-    st.caption('Default: include every current-period evaluation. Exclusions are a temporary scenario in this session only. No rows are deleted, no flags automatically exclude a row, and the individual/narrative tabs continue to show the baseline evidence. Changing workbook or appraisal period resets the selection.')
+    st.caption('Default: include every current-period evaluation. Exclusions are a temporary scenario in this session only. No rows are deleted, no flags automatically exclude a row, and the Individual SR tab continues to show the baseline evidence. Changing workbook or appraisal period resets the selection.')
     choices = {int(r['Row ID']): f"Row {r['Source row']} | {r['Resident Name']} | {r['Period']:%b %Y} | {r['Assessor original']} | {r['Assessment Type']} | score {r['Evaluation score']:.2f}" for _, r in current.iterrows()}
     def clear_exclusions():
         st.session_state[exclusion_key] = []

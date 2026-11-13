@@ -9,7 +9,7 @@ def test_empty_and_demo_navigation():
     assert not at.exception
     at.checkbox[0].check().run()
     assert not at.exception
-    assert len(at.tabs) == 3
+    assert [tab.label for tab in at.tabs] == ['📊 Individual SR', '🏆 Overall Ranking']
     assert len(at.dataframe) > 3
     # Repeated resident selections and changing the period must rerender safely.
     resident = next(s for s in at.selectbox if s.label == 'Choose resident')
@@ -24,7 +24,7 @@ def test_empty_and_demo_navigation():
     assert not at.exception
 
 
-def test_restored_charts_filters_and_reset():
+def test_restored_charts_and_individual_navigation():
     at = AppTest.from_file(APP, default_timeout=30).run()
     at.checkbox[0].check().run()
     assert not at.exception
@@ -35,19 +35,12 @@ def test_restored_charts_filters_and_reset():
     profile.select_index(1).run()
     assert not at.exception
     before_rank = [d.value for d in at.dataframe if 'Rank' in d.value.columns][0]
-    # Literal search with no match, then reset.
-    next(t for t in at.text_input if t.label == 'Search remarks').set_value('no matching prose xyz').run()
+    next(s for s in at.selectbox if s.label == 'Choose resident').set_value('resident beta').run()
     assert not at.exception
-    assert any('No evaluation comments match' in i.value for i in at.info)
     after_rank = [d.value for d in at.dataframe if 'Rank' in d.value.columns][0]
     assert before_rank.equals(after_rank)
-    next(t for t in at.text_input if t.label == 'Search remarks').set_value('').run()
-    next(m for m in at.multiselect if m.label == 'Residents').set_value(['resident beta']).run()
-    assert not at.exception
-    evidence = [d.value for d in at.dataframe if 'Evaluation score' in d.value.columns and 'Delta vs resident median' not in d.value.columns][0]
-    assert evidence['Resident Name'].eq('Resident Beta').all()
-    next(m for m in at.multiselect if m.label == 'Residents').set_value([]).run()
-    assert not at.exception
+    assert not any(s.value == 'Filter comments' for s in at.subheader)
+    assert any('Some domains were not observed' in t.value for t in at.text)
 
 
 def test_sensitivity_controls_exclude_restore_and_period_reset():

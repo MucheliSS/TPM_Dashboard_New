@@ -6,8 +6,9 @@ A Streamlit dashboard for reviewing Senior Resident assessment evidence during *
 
 ## What it shows
 
+Two tabs keep the workflow focused: **Individual SR** and **Overall Ranking**. All qualitative comments are available within Individual SR.
+
 - **Individual SR:** assessor profile line charts, average-domain tables with coverage counts, optional monthly trends, scores and all source narratives, including unmatched or qualitative-only records.
-- **Narrative audit:** filter comments by resident, assessor, month and literal text; unmatched or ambiguous feedback stays separate.
 - **Overall ranking:** comparison bar chart plus current-period mean, median, range, ID/GM mix, assessor counts and audit flags.
 - **Ranking sensitivity:** temporarily exclude selected assessments, compare baseline versus scenario, and restore all assessments in one click.
 - **Optional prior-posting comparison:** shared residents only; never changes the current-period ranking.
@@ -26,7 +27,7 @@ streamlit run tpm_dashboard.py
 1. Choose **Use synthetic demonstration** to explore fictional data and download an Excel template.
 2. Upload an unencrypted `.xlsx` workbook.
 3. Select the intended assessment start and end months. Check the actual date range and import warnings.
-4. Explore the assessor profiles and optional trends. Profile-month filters affect only the profile chart and domain table; comment filters never alter rankings.
+4. Explore the assessor profiles and optional trends. Profile-month filters affect only the profile chart and domain table, not narratives or rankings.
 5. Read the individual narratives and instrument breakdown before using the ranking in committee discussion.
 
 PDF exports are useful for checking structure, but are **not** supported app inputs.
@@ -60,7 +61,7 @@ Brief or missing remarks, limited observation, partial domains and repeated eval
 
 The Individual SR selector includes residents found in either sheet. Its narrative section shows qualitative source rows independently of score matching, with assessor, date, match status and inside/outside-period context. Unknown dates remain visible but never enter ranking. Repeated domain-score tables have been removed from narrative panels. Multiple recognised comment fields are preserved; a blank `Remarks` field no longer masks a populated `Comments` field. If no narrative text is detected, the app warns you to check the Excel headers.
 
-Under **Overall Ranking**, select specific assessments to exclude from a temporary sensitivity scenario. The app displays excluded rows and counts, baseline versus scenario means/ranks, and an unchanged baseline table. The scenario chart, ranking and coverage tables all use the same included rows. Residents with all assessments excluded remain visible and unranked. **Restore all assessments** clears the scenario. Changing the workbook or appraisal period resets it. No source data is deleted or edited; individual and narrative tabs remain baseline evidence.
+Under **Overall Ranking**, select specific assessments to exclude from a temporary sensitivity scenario. The app displays excluded rows and counts, baseline versus scenario means/ranks, and an unchanged baseline table. The scenario chart, ranking and coverage tables all use the same included rows. Residents with all assessments excluded remain visible and unranked. **Restore all assessments** clears the scenario. Changing the workbook or appraisal period resets it. No source data is deleted or edited; the Individual SR tab remains baseline evidence.
 
 These controls explore sensitivity, not a validated justification for discarding unfavourable scores. Resolve appraisal decisions through the committee's documented process.
 
