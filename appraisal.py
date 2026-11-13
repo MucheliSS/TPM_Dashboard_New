@@ -6,7 +6,7 @@ from io import BytesIO
 import numpy as np
 import pandas as pd
 from date_helpers import (pick_feedback_month_column, pick_feedback_year_column,
-                          pick_remarks_column, feedback_month_period)
+                          pick_remarks_column, feedback_month_period, _month_number)
 
 DOMAINS = ['PC', 'MK', 'SBP', 'PBLI', 'Prof', 'ICS']
 SCORE_COLUMNS = DOMAINS + ['Overall']
@@ -60,7 +60,7 @@ def metadata(frame):
     out['Source row'] = np.arange(len(out)) + 2
     specs = {'Resident Name': ['Resident Name', 'Resident', 'Name of Resident'],
              'Assessor original': ['Name of Evaluator', 'Assessor', 'Evaluator'],
-             'Assessment Type': ['Assessment Type', 'Instrument', 'Form'],
+             'Assessment Type': ['Assessment Type', 'Type of Evaluation', 'Evaluation Type', 'Instrument', 'Form'],
              'Assessment ID': ['Assessment ID', 'Evaluation ID', 'Response ID'],
              'Posting': ['Posting', 'Rotation', 'Attachment', 'Site']}
     for target, options in specs.items():
@@ -71,14 +71,23 @@ def metadata(frame):
     out['Instrument key'] = out['Assessment Type'].map(norm)
     out['Posting key'] = out['Posting'].map(norm)
     out['ID key'] = out['Assessment ID'].map(norm)
-    month_col = find_column(out, ['Month of Assessment', 'Assessment Month', 'Assessment Date', 'Date of Assessment', 'EPA Month', 'Rotation Month']) or pick_feedback_month_column(out)
+    month_col = find_column(out, ['Month of Assessment', 'Assessment Month', 'Assessment Date', 'Date of Assessment', 'EPA Month', 'Rotation Month', 'Month of Evaluation', 'Evaluation Month', 'Evaluation Date', 'Date of Evaluation']) or pick_feedback_month_column(out)
     # Submission dates must not silently become assessment dates.
     if month_col and any(t in norm(month_col) for t in ['submission', 'submitted', 'created', 'timestamp']):
         month_col = None
-    year_col = find_column(out, ['Year of Assessment', 'Assessment Year', 'EPA Year', 'Rotation Year']) or pick_feedback_year_column(out)
+    year_col = find_column(out, ['Year of Assessment', 'Assessment Year', 'EPA Year', 'Rotation Year', 'Year of Evaluation', 'Evaluation Year']) or pick_feedback_year_column(out)
     out['Period'] = pd.to_datetime([parse_period(row[month_col], row[year_col] if year_col else None)
                                   if month_col else pd.NaT for _, row in out.iterrows()])
     out['Date source'] = month_col or 'Unavailable'
+    out['Source month'] = out[month_col].fillna('').astype(str) if month_col else ''
+    out['Month number'] = out[month_col].map(_month_number) if month_col else pd.Series(None,index=out.index,dtype=object)
+    out['Date provenance'] = 'Source year-month'
+    explicit_year = out['Source month'].str.contains(r'\b(?:19|20)\d{2}\b',regex=True)
+    if year_col:
+        explicit_year = explicit_year | out[year_col].notna()
+    out.loc[out['Period'].isna(), 'Date provenance'] = 'Date unavailable or invalid'
+    out.loc[out['Period'].isna() & out['Month number'].notna() & ~explicit_year, 'Date provenance'] = 'Source month only; year not supplied'
+
     # Preserve every narrative field, not only the first header (which may be blank).
     primary = pick_remarks_column(out)
     narrative_cols = [c for c in out.columns
@@ -276,7 +285,7 @@ def resident_narratives(scores, comments, resident_key, start=None, end=None):
     for _, row in comments[comments['Resident key'].eq(resident_key)].iterrows():
         rows.append({'Source': 'Qualitative', 'Source row': row['Source row'], 'Period': row['Period'],
                      'Assessor': row['Assessor original'], 'Assessment Type': row['Assessment Type'],
-                     'Remarks': row['Remarks'], 'Match status': row['Match status'], 'Remarks source': row['Remarks source']})
+                     'Remarks': row['Remarks'], 'Match status': row['Match status'], 'Remarks source': row['Remarks source'], 'Source month': row['Source month'], 'Date provenance': row['Date provenance']})
     for _, row in scores[scores['Resident key'].eq(resident_key)].iterrows():
         inline = row['Inline remarks']
         if not inline.strip():
@@ -287,8 +296,8 @@ def resident_narratives(scores, comments, resident_key, start=None, end=None):
             continue
         rows.append({'Source': 'Quantitative (inline)', 'Source row': row['Source row'], 'Period': row['Period'],
                      'Assessor': row['Assessor original'], 'Assessment Type': row['Assessment Type'],
-                     'Remarks': inline, 'Match status': 'Inline comment', 'Remarks source': row['Remarks source']})
-    result = pd.DataFrame(rows, columns=['Source','Source row','Period','Assessor','Assessment Type','Remarks','Match status','Remarks source'])
+                     'Remarks': inline, 'Match status': 'Inline comment', 'Remarks source': row['Remarks source'], 'Source month': row['Source month'], 'Date provenance': row['Date provenance']})
+    result = pd.DataFrame(rows, columns=['Source','Source row','Period','Assessor','Assessment Type','Remarks','Match status','Remarks source','Source month','Date provenance'])
     def scope(period):
         if pd.isna(period):
             return 'Date unknown: not used in current-period ranking'
@@ -396,3 +405,14 @@ def compare_gm_scenarios(frame, excluded_ids=()):
                        'GM Overall withheld (<3)':int(included['GM Overall below 3'].sum()),
                        'GM score cells withheld (<3)':int(included['GM cells below 3'].sum())})
     return pd.concat(tables,ignore_index=True) if tables else pd.DataFrame(), pd.DataFrame(counts)
+
+
+
+def narrative_date_label(row):
+    if pd.notna(row['Period']):
+        return row['Period'].strftime('%b %Y')
+    month = _month_number(row.get('Source month',''))
+    if month:
+        import calendar
+        return calendar.month_abbr[month]
+    return 'Date not available'

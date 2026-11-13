@@ -88,7 +88,7 @@ def test_individual_shows_qualitative_only_and_unmatched_comments(monkeypatch):
     next(s for s in at.selectbox if s.label == 'Choose resident').set_value('resident gamma').run()
     assert not at.exception
     assert any(t.value == 'Qualitative-only original\ncomment with retained formatting.' for t in at.text)
-    assert any('Date unknown: not used' in c.value for c in at.caption)
+    assert any('no confirmed year/date' in c.value for c in at.caption)
     for e in at.expander:
         if 'Narrative Only Assessor' in e.label:
             assert not list(e.dataframe)
@@ -98,20 +98,20 @@ def test_gm_comparison_switch_keeps_exclusions_and_baseline():
     at = AppTest.from_file(APP,default_timeout=30).run()
     at.checkbox[0].check().run()
     assert not at.exception
-    assert next(s for s in at.selectbox if s.label == 'Ranking score scenario').value == 'Current GM mapping'
+    assert next(s for s in at.selectbox if s.label == 'Score mapping scenario').value == 'Current GM mapping'
     next(m for m in at.multiselect if m.label == 'Exclude assessments from the ranking scenario').set_value([1]).run()
-    next(s for s in at.selectbox if s.label == 'Ranking score scenario').set_value('Proposed GM mapping').run()
+    next(s for s in at.selectbox if s.label == 'Score mapping scenario').set_value('Proposed GM mapping').run()
     assert not at.exception
     assert next(m for m in at.multiselect if m.label == 'Exclude assessments from the ranking scenario').value == [1]
     table = next(d.value for d in at.dataframe if 'Baseline mean' in d.value.columns)
     beta = table[table['Resident Name'].eq('Resident Beta')].iloc[0]
     assert beta['Baseline mean'] == 4
     assert beta['Scenario mean'] == 3.5
-    next(s for s in at.selectbox if s.label == 'Ranking score scenario').set_value('ID-only').run()
+    next(s for s in at.selectbox if s.label == 'Score mapping scenario').set_value('ID-only').run()
     assert not at.exception
     assert next(m for m in at.multiselect if m.label == 'Exclude assessments from the ranking scenario').value == [1]
     assert any('ID-only Mean (1–5)' in d.value.columns for d in at.dataframe)
-    next(s for s in at.selectbox if s.label == 'Ranking score scenario').set_value('Current GM mapping').run()
+    next(s for s in at.selectbox if s.label == 'Score mapping scenario').set_value('Current GM mapping').run()
     assert not at.exception
     assert next(m for m in at.multiselect if m.label == 'Exclude assessments from the ranking scenario').value == [1]
 
@@ -123,10 +123,50 @@ def test_proposed_mapping_shows_low_gm_review_rows(monkeypatch):
     monkeypatch.setattr(appraisal,'synthetic_data',lambda:(q,c))
     at = AppTest.from_file(APP,default_timeout=30).run()
     at.checkbox[0].check().run()
-    next(s for s in at.selectbox if s.label == 'Ranking score scenario').set_value('Proposed GM mapping').run()
+    next(s for s in at.selectbox if s.label == 'Score mapping scenario').set_value('Proposed GM mapping').run()
     assert not at.exception
     assert any('raw values below 3' in w.value for w in at.warning)
     review = next(d.value for d in at.dataframe if 'GM cells below 3' in d.value.columns)
     assert review['Raw Overall'].iloc[0] == 2
     assert review['GM cells below 3'].iloc[0] == 7
     assert review['Evaluation score'].isna().all()
+
+
+def test_global_mapping_updates_individual_domains_metrics_and_table():
+    at = AppTest.from_file(APP,default_timeout=30).run()
+    at.checkbox[0].check().run()
+    next(s for s in at.selectbox if s.label == 'Choose resident').set_value('resident beta').run()
+    assert next(m.value for m in at.metric if m.label == 'Combined mean (1–5)') == '4.00'
+    next(s for s in at.selectbox if s.label == 'Score mapping scenario').set_value('Proposed GM mapping').run()
+    assert not at.exception
+    assert next(m.value for m in at.metric if m.label == 'Combined mean (1–5)') == '3.50'
+    domains = next(d.value for d in at.dataframe if 'Rated evaluations' in d.value.columns)
+    assert domains.loc[domains['Domain'].eq('PC'),'Mean (1–5)'].iloc[0] == 3.5
+    evidence = next(d.value for d in at.dataframe if 'Delta vs resident median' in d.value.columns)
+    assert evidence.loc[evidence['Assessment Type'].eq('TTSH GM MPE'),'Evaluation score'].iloc[0] == 3.5
+    next(s for s in at.selectbox if s.label == 'Score mapping scenario').set_value('ID-only').run()
+    assert not at.exception
+    assert next(m.value for m in at.metric if m.label == 'ID-only mean (1–5)') == '3.50'
+    domains = next(d.value for d in at.dataframe if 'Rated evaluations' in d.value.columns)
+    assert domains.loc[domains['Domain'].eq('PC'),'Rated evaluations'].iloc[0] == 1
+    assert domains.loc[domains['Domain'].eq('ICS'),'Rated evaluations'].iloc[0] == 0
+    evidence = next(d.value for d in at.dataframe if 'Delta vs resident median' in d.value.columns)
+    assert evidence.loc[evidence['Assessment Type'].eq('TTSH GM MPE'),'Evaluation score'].isna().all()
+
+
+def test_source_month_visible_without_technical_status_on_cards(monkeypatch):
+    import appraisal
+    import pandas as pd
+    q,c = appraisal.synthetic_data()
+    c=pd.DataFrame([{'Resident Name':'Resident Alpha','Month of Evaluation':'Dec ',
+                     'Assessor':'Assessor One','Type of evaluation':'MPE','Remarks':'Verbatim original prose'}])
+    monkeypatch.setattr(appraisal,'synthetic_data',lambda:(q,c))
+    at=AppTest.from_file(APP,default_timeout=30).run()
+    at.checkbox[0].check().run()
+    assert not at.exception
+    assert any(e.label == 'Dec · Assessor One' for e in at.expander)
+    assert any(t.value == 'Verbatim original prose' for t in at.text)
+    card=next(e for e in at.expander if e.label == 'Dec · Assessor One')
+    assert not list(card.caption)
+    assert not list(card.dataframe)
+    assert any(e.label == 'Comment details' for e in at.expander)

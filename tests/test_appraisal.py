@@ -276,3 +276,27 @@ def test_gm_comparisons_empty_and_all_excluded():
     assert table['Rank'].isna().all()
     assert counts['Valid Overall scores'].eq(0).all()
     assert compare_gm_scenarios(x.iloc[0:0])[0].empty
+
+
+def test_actual_qualitative_schema_month_without_year_is_not_inferred():
+    from appraisal import metadata,narrative_date_label
+    qual = pd.DataFrame([{'Resident Name':'Resident A','Month of Evaluation':' Dec ',
+                          'Assessor':'Assessor One','Type of evaluation':'MPE','Remarks':'Original prose'}])
+    q,c = join_remarks(prepare_quantitative(pd.DataFrame([qrow(**{'Month of Assessment':'Dec'})])),qual)
+    assert c['Assessment Type'].iloc[0] == 'MPE'
+    assert c['Source month'].iloc[0] == ' Dec '
+    assert pd.isna(c['Period'].iloc[0])
+    assert c['Date provenance'].iloc[0] == 'Source month only; year not supplied'
+    assert q['Comment match'].iloc[0] == 'Unmatched'
+    narratives = resident_narratives(q,c,'resident a')
+    assert narrative_date_label(narratives.iloc[0]) == 'Dec'
+    assert narratives['Remarks'].iloc[0] == 'Original prose'
+
+
+def test_evaluation_month_and_explicit_year_aliases_are_used():
+    from appraisal import metadata,narrative_date_label
+    source = pd.DataFrame([{'Resident Name':'Resident A','Month of Evaluation':'Dec',
+                            'Year of Evaluation':2025,'Assessor':'Assessor One','Type of evaluation':'GM MPE','Remarks':'Original'}])
+    data=metadata(source)
+    assert data['Period'].iloc[0] == pd.Timestamp('2025-12-01')
+    assert narrative_date_label(data.iloc[0]) == 'Dec 2025'

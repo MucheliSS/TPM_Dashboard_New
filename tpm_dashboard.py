@@ -4,14 +4,14 @@ from hashlib import sha256
 import pandas as pd
 import streamlit as st
 from appraisal import (DOMAINS, INSTRUMENTS, ALIASES, prepare_quantitative, join_remarks,
-                       in_period, resident_summary, synthetic_data, workbook_bytes, resident_narratives, sensitivity_analysis, GM_SCENARIOS, apply_gm_scenario, compare_gm_scenarios)
+                       in_period, resident_summary, synthetic_data, workbook_bytes, resident_narratives, sensitivity_analysis, GM_SCENARIOS, apply_gm_scenario, compare_gm_scenarios, narrative_date_label)
 
 from visualizations import profile_figure, domain_summary, temporal_figure, comparison_figure
 
 st.set_page_config(page_title='SR appraisal evidence', page_icon='📊', layout='wide')
 st.title('Senior Resident appraisal evidence')
 st.caption('Current-period summative evidence • No seniority adjustment • No automatic bonus allocation')
-st.info('Combined scores use linear GM endpoint rescaling, not proven equivalence of rating anchors. Read the ID/GM breakdown and narratives before making appraisal judgements.')
+st.info('GM score scenarios are exploratory, not proof that rating anchors are equivalent. Read the ID/GM breakdown and narratives before making appraisal judgements.')
 
 
 def load_workbook(blob):
@@ -62,6 +62,18 @@ with st.sidebar:
         st.error('No assessment year-month could be parsed. Rankings are unavailable until dates are corrected.')
         current = scores.iloc[0:0].copy()
     previous = st.file_uploader('Optional prior-posting workbook', type=['xlsx'])
+    st.subheader('Score mapping')
+    gm_scenario = st.selectbox('Score mapping scenario', list(GM_SCENARIOS), key=f'gm_{dataset_key}')
+    st.caption(GM_SCENARIOS[gm_scenario])
+    if gm_scenario == 'Proposed GM mapping':
+        st.warning('The proposed mapping caps GM at 4 while ID can reach 5. Withholding GM values below 3 can raise a mean by changing its denominator. This is a sensitivity check, not a validated fairness correction.')
+    elif gm_scenario == 'ID-only':
+        st.info('ID-only changes the evidence mix. GM-only residents remain visible but unranked in this scenario.')
+    st.caption('Exploratory comparisons, not validated scale equivalence. The selected mapping applies to both tabs. The current mapping remains the unchanged comparison baseline. Changing this selector does not clear manual exclusions.')
+
+scenario_current = apply_gm_scenario(current, gm_scenario)
+st.caption(f'Active score mapping: {gm_scenario}. Applies to Individual SR and Overall Ranking.')
+
 
 with st.expander('Import validation and scoring rules', expanded=False):
     a, b, c, d = st.columns(4)
@@ -73,7 +85,7 @@ with st.expander('Import validation and scoring rules', expanded=False):
     if periods:
         st.write(f"Actual assessment range: {pd.Timestamp(periods[0]):%b %Y} to {pd.Timestamp(periods[-1]):%b %Y}")
     st.write('Primary score: supplied Overall. Domain mean is shown separately and is not substituted when Overall is missing. Each valid evaluation receives equal weight; repeated assessors therefore contribute repeatedly. Median and range are evaluation-level, not rater-severity estimates.')
-    st.write('GM mapping: (raw + 1) ÷ 2. Zero and N.A are unrated. Invalid scores and unknown instruments are not scored. Current-period ranking excludes missing dates and missing resident names. Flags prompt review and never deduct points.')
+    st.write('Baseline GM mapping: (raw + 1) ÷ 2. The active scenario is selected in the sidebar. Zero and N.A are unrated. Invalid scores and unknown instruments are not scored. Current-period ranking excludes missing dates and missing resident names. Flags prompt review and never deduct points.')
     st.write('Ranks use full-precision means and exact ties share the minimum rank (1, 1, 3). Display rounding is not a test of meaningful difference.')
     st.json({'Recognised instruments': INSTRUMENTS, 'Explicit assessor aliases': ALIASES}, expanded=False)
     st.dataframe(scores[['Instrument group', 'Comment match']].value_counts().rename('Rows').reset_index(), hide_index=True)
@@ -101,20 +113,24 @@ with individual:
         keys = resident_catalog.loc[resident_catalog['Resident key'].ne('')].drop_duplicates('Resident key')
         names = dict(zip(keys['Resident key'], keys['Resident Name']))
         selected = st.selectbox('Choose resident', list(names), format_func=names.get)
-        data = current[current['Resident key'].eq(selected)].copy()
+        data = scenario_current[scenario_current['Resident key'].eq(selected)].copy()
+        st.caption(f'Score mapping: {gm_scenario}. Individual SR shows all evaluations for the selected period; manual assessment exclusions affect the ranking scenario only.')
+        if gm_scenario == 'ID-only':
+            st.caption('GM evaluations and comments remain visible, but their scores and domain values are not used in this view.')
         if data.empty:
             st.info('No quantitative evaluations for this resident in the selected appraisal period. Available source comments are shown below, independently of score matching.')
         median = data['Evaluation score'].median() if data['Evaluation score'].notna().any() else float('nan')
         data['Delta vs resident median'] = data['Evaluation score'] - median
         x, y, z = st.columns(3)
-        x.metric('Combined mean (1–5)', f"{data['Evaluation score'].mean():.2f}" if data['Evaluation score'].notna().any() else 'Not scored')
+        x.metric('ID-only mean (1–5)' if gm_scenario == 'ID-only' else 'Combined mean (1–5)', f"{data['Evaluation score'].mean():.2f}" if data['Evaluation score'].notna().any() else 'Not scored')
         y.metric('Median (1–5)', f'{median:.2f}' if pd.notna(median) else 'Not scored')
         z.metric('Evaluations / unique assessors', f"{len(data)} / {data.loc[data['Assessor key'].ne(''), 'Assessor key'].nunique()}")
+        st.caption(f'{int(data["Evaluation score"].notna().sum())} of {len(data)} evaluations contribute a valid Overall under {gm_scenario}.')
         st.caption('A deviation from this resident’s period median describes disagreement. It does not establish assessor leniency or justify an adjustment.')
         st.subheader('Assessment profile')
         profile_month = st.selectbox('Profile month', ['All selected months'] + sorted(data['Period'].dt.strftime('%Y-%m').unique()))
         profile_data = data if profile_month == 'All selected months' else data[data['Period'].dt.strftime('%Y-%m').eq(profile_month)]
-        st.caption('Each line is one evaluation, not an assessor average. Repeated assessments remain separate; missing domains leave gaps. GM values are linearly rescaled.')
+        st.caption('Each line is one evaluation, not an assessor average. Repeated assessments remain separate; missing domains leave gaps. Scores follow the active mapping; withheld GM domains leave gaps.')
         if profile_data[DOMAINS].notna().any().any():
             st.plotly_chart(profile_figure(profile_data), width='stretch', key='assessment_profiles')
         else:
@@ -138,21 +154,26 @@ with individual:
                                     'Evaluation score': st.column_config.NumberColumn(format='%.2f'),
                                     'Domain mean': st.column_config.NumberColumn(format='%.2f')})
         st.subheader('Verbatim narrative review')
-        st.caption('All qualitative source comments for this resident are shown, including unmatched, ambiguous and undated records. They are not assigned to a score merely because the resident matches. The profile-month filter does not hide these narratives.')
+        st.caption('Original comments, ordered by date where available. All comments for this resident remain visible.')
         narratives = resident_narratives(scores, comments, selected, start if periods else None, end if periods else None)
         if narratives.empty:
             st.info('No source narrative records were found for this resident. Check the Qualitative sheet and import diagnostics.')
+        uncertain_dates = int(narratives['Period'].isna().sum())
+        if uncertain_dates:
+            st.caption(f'{uncertain_dates} comment(s) have no confirmed year/date. The original month is shown when supplied; no year is inferred.')
         for _, row in narratives.iterrows():
-            date_label = row['Period'].strftime('%b %Y') if pd.notna(row['Period']) else 'Unknown date'
-            with st.expander(f"{date_label} · {row['Assessor'] or 'Assessor unavailable'} · {row['Source']} row {row['Source row']}", expanded=True):
-                st.caption(f"{row['Period context']} | {row['Match status']} | {row['Assessment Type'] or 'Instrument unspecified'} | Source field(s): {row['Remarks source']}")
-                st.text(row['Remarks'] or 'This source row has no narrative text.')
+            with st.expander(f"{narrative_date_label(row)} · {row['Assessor'] or 'Assessor not provided'}", expanded=True):
+                st.text(row['Remarks'] or 'No comment entered.')
+        with st.expander('Comment details', expanded=False):
+            st.caption('Comments are not linked to scores by resident alone. Missing years are not inferred from other records. Technical matching details are retained here for audit.')
+            st.dataframe(narratives[['Source','Source row','Source month','Period','Assessor','Assessment Type','Date provenance','Match status','Period context']], hide_index=True, width='stretch')
         if previous:
             try:
                 prior, _ = load_workbook(previous.getvalue())
+                prior = apply_gm_scenario(prior, gm_scenario)
                 shared = set(prior['Resident key']) & set(current['Resident key']) - {''}
                 prior_shared = prior[prior['Resident key'].isin(shared)]
-                current_shared = current[current['Resident key'].isin(shared)]
+                current_shared = scenario_current[scenario_current['Resident key'].isin(shared)]
                 st.subheader('Prior-posting comparison: shared residents only')
                 st.caption('Separate descriptive evidence, never included in current-period rank. Different posting and time contexts still matter.')
                 if selected in shared:
@@ -168,23 +189,15 @@ with ranking:
     st.subheader('Current-period summative standing')
     st.caption('Committee decision support, not a complete measure of merit or service contribution. Small numeric differences and sparse evidence require judgement.')
     exclusion_key = f"excluded_{dataset_key}_{start if periods else 'none'}_{end if periods else 'none'}"
-    st.subheader('GM mapping comparison')
-    gm_scenario = st.selectbox('Ranking score scenario', list(GM_SCENARIOS), key=f'gm_{dataset_key}')
-    st.caption(GM_SCENARIOS[gm_scenario])
-    if gm_scenario == 'Proposed GM mapping':
-        st.warning('The proposed mapping caps GM at 4 while ID can reach 5. Withholding GM values below 3 can raise a mean by changing its denominator. This is a sensitivity check, not a validated fairness correction.')
-    elif gm_scenario == 'ID-only':
-        st.info('ID-only changes the evidence mix. GM-only residents remain visible but unranked in this scenario.')
-    st.caption('Exploratory comparisons, not validated scale equivalence. The current mapping remains the unchanged baseline and is used in Individual SR. Changing this selector does not clear manual exclusions.')
     st.subheader('Assessment selection: sensitivity analysis')
-    st.caption('Default: include every current-period evaluation. Exclusions are a temporary scenario in this session only. No rows are deleted, and narrative audit flags never exclude rows. The selected score scenario may leave GM values unscored, with counts shown below; and the Individual SR tab continues to show the baseline evidence. Changing workbook or appraisal period resets the selection.')
+    st.caption('Default: include every current-period evaluation. Exclusions are a temporary scenario in this session only. No rows are deleted, and narrative audit flags never exclude rows. The selected score scenario may leave GM values unscored, with counts shown below; the Individual SR tab uses the same mapping but keeps all evaluations visible. Changing workbook or appraisal period resets the selection.')
     choices = {int(r['Row ID']): f"Row {r['Source row']} | {r['Resident Name']} | {r['Period']:%b %Y} | {r['Assessor original']} | {r['Assessment Type']} | baseline score {r['Evaluation score']:.2f}" for _, r in current.iterrows()}
     def clear_exclusions():
         st.session_state[exclusion_key] = []
     st.button('Restore all assessments', on_click=clear_exclusions)
     excluded_ids = st.multiselect('Exclude assessments from the ranking scenario', list(choices),
                                  format_func=choices.get, key=exclusion_key)
-    scenario_data = apply_gm_scenario(current, gm_scenario)
+    scenario_data = scenario_current
     included, excluded, baseline, summary, comparison = sensitivity_analysis(scenario_data, excluded_ids, baseline_frame=current)
     all_scenarios, scenario_counts = compare_gm_scenarios(current, excluded_ids)
     st.subheader('Three-way comparison: same assessment selection')

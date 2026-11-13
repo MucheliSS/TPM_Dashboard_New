@@ -54,7 +54,7 @@ Common date, assessor and comment column aliases are supported. Optional `Assess
 
 ## GM comparison scenarios
 
-The ranking selector offers three **exploratory** options. The unchanged baseline and Individual SR view always use the current mapping.
+The sidebar score-mapping selector offers three **exploratory** options and applies consistently to **both tabs**: individual metrics, domain tables, profiles, trends and the ranking scenario. The unchanged comparison baseline uses the current mapping.
 
 | Scenario | GM treatment |
 |---|---|
@@ -64,7 +64,7 @@ The ranking selector offers three **exploratory** options. The unchanged baselin
 
 Under the proposed mapping, raw GM values **below 3 become missing and are flagged for review**, not extrapolated below 1 or clipped. This applies independently to Overall and each domain. A withheld Overall does not enter the mean/rank denominator; domain values are not substituted for it. Source values and rows are preserved.
 
-All three comparisons use the **same manual assessment exclusions**. Changing mapping does not clear those exclusions. The app shows each resident’s mean, rank and scored/unscored counts, plus GM values withheld by the proposed rule. The selected scenario drives its chart, ranking and coverage table; the full original baseline remains available separately.
+All three comparisons use the **same manual assessment exclusions**. Changing mapping does not clear those exclusions. The app shows each resident’s mean, rank and scored/unscored counts, plus GM values withheld by the proposed rule. The selected mapping drives both tabs. Manual assessment exclusions apply only to the ranking sensitivity scenario; Individual SR keeps every source evaluation visible under that same mapping. The full original baseline remains available separately.
 
 Neither numerical mapping establishes equivalent rating anchors. Proposed mapping caps the highest GM value at 4, while ID can reach 5; ID-only changes the evidence mix; withholding low GM values can raise a mean. These are sensitivity checks, not validated corrections or a basis for silently discarding assessments.
 
@@ -76,9 +76,9 @@ Brief or missing remarks, limited observation, partial domains and repeated eval
 
 ### Narrative visibility and ranking sensitivity
 
-The Individual SR selector includes residents found in either sheet. Its narrative section shows qualitative source rows independently of score matching, with assessor, date, match status and inside/outside-period context. Unknown dates remain visible but never enter ranking. Repeated domain-score tables have been removed from narrative panels. Multiple recognised comment fields are preserved; a blank `Remarks` field no longer masks a populated `Comments` field. If no narrative text is detected, the app warns you to check the Excel headers.
+The Individual SR selector includes residents found in either sheet. Its narrative section shows qualitative source rows independently of score matching, with a simple month/date and assessor heading. Source and matching details remain available in a collapsed diagnostics panel. The original month remains visible when the source omits its year; no year is inferred from another evaluation. Unconfirmed dates never enter current-period ranking. Repeated domain-score tables have been removed from narrative panels. Multiple recognised comment fields are preserved; a blank `Remarks` field no longer masks a populated `Comments` field. If no narrative text is detected, the app warns you to check the Excel headers.
 
-Under **Overall Ranking**, select specific assessments to exclude from a temporary sensitivity scenario. The app displays excluded rows and counts, baseline versus scenario means/ranks, and an unchanged baseline table. The scenario chart, ranking and coverage tables all use the same included rows. Residents with all assessments excluded remain visible and unranked. **Restore all assessments** clears the scenario. Changing the workbook or appraisal period resets it. No source data is deleted or edited; the Individual SR tab remains baseline evidence.
+Under **Overall Ranking**, select specific assessments to exclude from a temporary sensitivity scenario. The app displays excluded rows and counts, baseline versus scenario means/ranks, and an unchanged baseline table. The scenario chart, ranking and coverage tables all use the same included rows. Residents with all assessments excluded remain visible and unranked. **Restore all assessments** clears the scenario. Changing the workbook or appraisal period resets it. No source data is deleted or edited; the Individual SR tab keeps all source evaluations visible using the selected score mapping.
 
 These controls explore sensitivity, not a validated justification for discarding unfavourable scores. Resolve appraisal decisions through the committee's documented process.
 
@@ -88,7 +88,7 @@ These controls explore sensitivity, not a validated justification for discarding
 
 Uploads are processed within the Streamlit session, without intentional disk storage, global data caching or external AI/NLP calls. Keep real workbooks, PDFs, comments, screenshots and exports out of Git. Review server logging, retention and backups separately.
 
-The sample PDF supported the quantitative schema, but did not validate full Excel ingestion, qualitative linkage or scale-anchor equivalence. Check those against the original institutional records before appraisal use.
+The original Excel workbook was inspected: its qualitative sheet supplies `Month of Evaluation` without a year and uses `Type of evaluation`. These aliases are supported. Source months are displayed without guessing a year; comments remain visible independently of quantitative linkage. Rating-anchor equivalence remains unverified. Check source records and institutional appraisal rules before use.
 
 ## Tests
 
