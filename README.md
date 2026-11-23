@@ -28,7 +28,7 @@ streamlit run tpm_dashboard.py
 1. Choose **Use synthetic demonstration** to explore fictional data and download an Excel template.
 2. Upload an unencrypted `.xlsx` workbook.
 3. Select the intended assessment start and end months. Check the actual date range and import warnings.
-4. Explore the assessor profiles and optional trends. Profile-month filters affect only the profile chart and domain table, not narratives or rankings.
+4. Explore the assessor profiles and optional trends. In the profile chart, use **Spotlight assessors** to show all evaluations from up to three selected assessors on the same score axis. Clear the selection to show every evaluation again. Spotlight is chart-only; the profile-month filter also affects the domain table. Neither changes narratives or rankings.
 5. Read the individual narratives and instrument breakdown before using the ranking in committee discussion.
 
 PDF exports are useful for checking structure, but are **not** supported app inputs.

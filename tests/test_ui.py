@@ -191,3 +191,32 @@ def test_requested_ranking_cleanup_and_labels():
         assert 'Scenario' not in d.value.columns
     assert any('Audit flags' in d.value.columns for d in at.tabs[0].dataframe)
     assert any(m.label == 'Exclude assessments from the ranking scenario' for m in at.multiselect)
+
+
+def test_chart_spotlight_leaves_summary_and_ranking_unchanged_and_clears():
+    import json
+
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.checkbox[0].check().run()
+    assert not at.exception
+
+    def chart():
+        return json.loads(at.get('plotly_chart')[0].proto.spec)
+
+    def control():
+        return next(m for m in at.multiselect if m.label == 'Spotlight assessors (chart only)')
+
+    original = chart()
+    tables = [d.value.copy(deep=True) for d in at.dataframe]
+    narratives = [t.value for t in at.text]
+    assert control().value == []
+    assert control().options
+    control().set_value(['assessor one']).run()
+    active = chart()
+    assert not at.exception
+    assert 0 < len(active['data']) < len(original['data'])
+    assert active['layout']['yaxis']['range'] == original['layout']['yaxis']['range']
+    assert all(old.equals(new.value) for old, new in zip(tables, at.dataframe, strict=True))
+    assert narratives == [t.value for t in at.text]
+    control().set_value([]).run()
+    assert chart() == original

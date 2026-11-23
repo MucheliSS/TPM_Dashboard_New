@@ -6,7 +6,8 @@ import streamlit as st
 from appraisal import (DOMAINS, INSTRUMENTS, ALIASES, prepare_quantitative, join_remarks,
                        in_period, resident_summary, synthetic_data, workbook_bytes, resident_narratives, sensitivity_analysis, GM_SCENARIOS, apply_gm_scenario, narrative_date_label)
 
-from visualizations import profile_figure, domain_summary, temporal_figure, comparison_figure
+from visualizations import (assessment_chart_dashes, assessor_chart_styles, profile_chart_options,
+                            profile_figure, domain_summary, temporal_figure, comparison_figure)
 
 st.set_page_config(page_title='SR appraisal evidence', page_icon='📊', layout='wide')
 st.title('Senior Resident appraisal evidence')
@@ -131,7 +132,21 @@ with individual:
         profile_data = data if profile_month == 'All selected months' else data[data['Period'].dt.strftime('%Y-%m').eq(profile_month)]
         st.caption('Each line is one evaluation, not an assessor average. Repeated assessments remain separate; missing domains leave gaps. Scores follow the active mapping; withheld GM domains leave gaps.')
         if profile_data[DOMAINS].notna().any().any():
-            st.plotly_chart(profile_figure(profile_data), width='stretch', key='assessment_profiles')
+            choices = profile_chart_options(profile_data)
+            spotlight = ()
+            if len(choices) >= 2:
+                spotlight = st.multiselect(
+                    'Spotlight assessors (chart only)', options=list(choices), format_func=choices.get,
+                    max_selections=3, placeholder='All evaluations shown by default',
+                    help='Choose up to three assessors. Clear your selection to show all evaluations. '
+                         'This does not change the scores, table or comments.',
+                    key=f'profile_spotlight_{dataset_key}_{selected}_{start}_{end}_{profile_month}_{gm_scenario}')
+            if spotlight:
+                st.caption('Spotlight active. Clear the selection to show all evaluations.')
+            st.plotly_chart(profile_figure(
+                profile_data, styles=assessor_chart_styles(scores), spotlight=spotlight,
+                evaluation_dashes=assessment_chart_dashes(scores)),
+                width='stretch', key='assessment_profiles')
         else:
             st.info('No valid domain scores are available for this resident.')
         st.subheader('Average domain scores')
