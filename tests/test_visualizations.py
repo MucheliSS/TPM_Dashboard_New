@@ -59,3 +59,42 @@ def test_literal_comment_filters_do_not_mutate_input():
     data.loc[0,'Period'] = pd.NaT
     assert len(filter_comments(data, months=['Unknown month'])) == 1
     pd.testing.assert_frame_equal(before.iloc[1:],data.iloc[1:])
+
+
+def test_profile_spotlight_keeps_all_selected_evaluations_and_stable_styles():
+    from visualizations import assessor_chart_styles, assessment_chart_dashes, profile_chart_options
+
+    data = records()
+    repeated = data.iloc[[0]].copy()
+    repeated['Source row'] = 100
+    repeated['Assessor original'] = 'Assessor One (alias)'
+    data = pd.concat([data, repeated], ignore_index=True)
+    styles = assessor_chart_styles(data)
+    dashes = assessment_chart_dashes(data)
+    resident = data[data['Resident key'].eq('resident alpha')]
+    full = profile_figure(resident, styles=styles, evaluation_dashes=dashes)
+    filtered = profile_figure(resident, styles=styles, spotlight=('assessor one',),
+                              evaluation_dashes=dashes)
+    original = {trace.name: trace for trace in full.data}
+    assert len(filtered.data) == resident['Assessor key'].eq('assessor one').sum() == 2
+    assert len({trace.line.dash for trace in filtered.data}) == 2
+    assert len({(trace.line.color, trace.marker.symbol) for trace in filtered.data}) == 1
+    for trace in filtered.data:
+        assert trace.line == original[trace.name].line
+        assert trace.marker == original[trace.name].marker
+    assert full.layout.yaxis.range == filtered.layout.yaxis.range
+    assert full.layout.yaxis.fixedrange and filtered.layout.yaxis.fixedrange
+    assert profile_chart_options(data)['assessor one'] == 'Assessor One'
+    assert len(set(styles.values())) == len(styles)
+
+
+def test_profile_labels_skip_tied_endpoints_and_keep_readable_ticks():
+    from appraisal import DOMAINS
+
+    data = records().iloc[:3].copy()
+    data[DOMAINS[-1]] = [2, 2, 4]
+    fig = profile_figure(data)
+    assert [label.y for label in fig.layout.annotations] == [4]
+    assert fig.layout.xaxis.tickfont.size == 16
+    assert fig.layout.yaxis.title.font.size == 18
+    assert all(trace.line.width == 3 for trace in fig.data)
